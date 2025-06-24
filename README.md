@@ -18,7 +18,7 @@ Place the following parameter and basis files into your home directory (`~/`):
 - `.eeq` — electronegativity equilibration parameters
 - `.basisq` — atom-in-molecule AO basis
 
-## 🚀 Usage
+## Usage
 
 By default, `gxtb` expects a coordinate file in TURBOMOLE format.
 
@@ -70,7 +70,7 @@ gxtb -hess
 ```
 Computes a numerical Hessian (very expensive).
 
-## 🧪 Current Coverage
+## Current Coverage
 
 - Reasonably parameterized for elements Z = 1–58, 71–89, and 92
 - U and Yb are currently crude
