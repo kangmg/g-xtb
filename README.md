@@ -73,7 +73,6 @@ Computes a numerical Hessian (very expensive).
 ## Current Coverage
 
 - Reasonably parameterized for elements Z = 1–58, 71–89, and 92
-- U and Yb are currently crude
 - A revised dispersion model (`revD4`) is in progress and may slightly affect final results
 
 ## 📊 Output and Analysis
