@@ -59,7 +59,7 @@ Or with a `coord` file in TURBOMOLE format:
 xtb coord --driver "gxtb -grad -c xtbdriver.coord" --opt
 ```
 
-💡 You may use `--opt loose` for faster convergence, as gradients are approximate.
+💡 You may use `--opt loose` for faster convergence, as there is currently no analytical nuclear gradient — gradients are evaluated numerically and can be noisy.
 
 ### Numerical Hessian
 
