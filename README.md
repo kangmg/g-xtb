@@ -52,16 +52,14 @@ Molecular symmetry is exploited to speed up calculations.
 
 To optimize geometries using xtb with gxtb as a driver:
 ```
-touch .GRAD                 # required to trigger gradient computation
-xtb coord --opt --driver gxtb
+xtb struc.xyz --driver "gxtb -grad -c xtbdriver.xyz" --opt
+```
+Or with a `coord` file in TURBOMOLE format:
+```
+xtb coord --driver "gxtb -grad -c xtbdriver.coord" --opt
 ```
 
 💡 You may use `--opt loose` for faster convergence, as gradients are approximate.
-💡 Alternatively, define a custom wrapper script (e.g., `GXTB`) and call it:
-
-```
-xtb coord --opt --driver GXTB
-```
 
 ### Numerical Hessian
 
