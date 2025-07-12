@@ -31,10 +31,10 @@ class gxTB(Calculator):
     uhf : int, optional
         Number of unpaired electrons. Can be overridden by atoms.info['uhf']
     verbose : bool, default=False
-        If True, print verbose output
+        If True, print verbose log
     capture_stdout : bool, default=False
-        If True, capture and store stdout in atoms.info['gxtb_stdout']
-        If False, redirect stdout to /dev/null (or NUL on Windows)
+        If True, capture and store stdout in atoms.calc.stdout
+        If False, redirect stdout to /dev/null
     """
     
     implemented_properties = ['energy', 'forces']
