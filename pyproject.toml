@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gxtb"
+version = "0.0.1"
+authors = [
+  { name="Mingi KANG", email="kangmg@korea.ac.kr" },
+]
+description = "Unofficial ase interface wrapper calculator for g-xTB"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+]
+dependencies = [
+    "ase",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/kangmg/g-xtb"
