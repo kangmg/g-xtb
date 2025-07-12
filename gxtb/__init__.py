@@ -2,7 +2,7 @@ import requests
 from pathlib import Path
 import os
 import shutil
-from calculator import gxTB
+from .calculator import gxTB
 
 __version__ = '0.0.1'
 
