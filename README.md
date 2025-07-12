@@ -1,84 +1,46 @@
-# 🚧 g-xTB — Development Version
+# g-xTB ASE interface(unofficial)
 
-This is a preliminary version of g-xTB, a general-purpose semiempirical quantum mechanical method approximating ωB97M-V/def2-TZVPPD properties.
+**This repository is an unofficial implementation of g-xTB for temporary use until its official release.**
 
-## 📄 Preprint
+The g-xTB method is currently under active development and is scheduled to be officially implemented in the `tblite` library. This repository provides a way to use g-xTB in ase interface before it is officially released.
 
-See the preprint at ChemRxiv: https://chemrxiv.org/engage/chemrxiv/article-details/685434533ba0887c335fc974
+## Installation
 
-## 📦 Installation
+You can install the package directly from this GitHub repository using pip:
 
-> [!WARNING]
-> `gxtb` currently works only on Linux-based machines.
-
-Place the `gxtb` binary in a directory belonging to your `$PATH` variable (e.g., `$USER/bin/`).
-
-Place the following parameter and basis files into your home directory (`~/`):
-- `.gxtb` — parameter file
-- `.eeq` — electronegativity equilibration parameters
-- `.basisq` — atom-in-molecule AO basis
+```bash
+pip install git+https://github.com/kangmg/g-xtb.git
+```
 
 ## Usage
 
-By default, `gxtb` expects a coordinate file in TURBOMOLE format.
+More examples can be found in  <a href="https://colab.research.google.com/github/kangmg/g-xtb/blob/main/example/gxTB_tutorial.ipynb" target="_parent">
+  <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
+</a>
 
-### Run examples
+```python
+#######################
+# Basic usage example # 
+#######################
 
+from ase.build import molecule
+from gxtb import gxTB
+
+# Create an ASE Atoms object
+atoms = molecule('CH3COOH')
+
+# Set charge and unrestricted Hartree-Fock (UHF) parameters
+atoms.info['charge'] = 0
+atoms.info['uhf'] = 0
+
+# Initialize the g-xTB calculator
+# You can also pass parameters directly: gxTB(charge=0, uhf=0)
+atoms.calc = gxTB()
+
+# Calculate energy and forces
+energy = atoms.get_potential_energy()
+forces = atoms.get_forces()
+
+print(f"Energy(eV): {energy}\n")
+print(f"Forces(eV/A):\n{forces}")
 ```
-gxtb                       # default: coord file = TURBOMOLE format
-gxtb -c <coord_file_name>  # explicit coordinate file (TURBOMOLE or XYZ)
-gxtb -c <xyz_file_name>    # XYZ file supported
-```
-
-Place the following optional control files in your working directory:
-- `.CHRG` # Integer charge of the system (default: neutral)
-- `.UHF` # Integer number of open shells (e.g., 2 for triplet, 0 for singlet UKS)
-
-If `.CHRG` or `.UHF` are not present: 
-- Even electrons: neutral singlet (RKS)
-- Odd electrons: neutral doublet (UKS)
-
-## ⚙️ Additional Features
-
-### Numerical Gradient
-
-```
-gxtb -grad
-```
-Or if a file named `.GRAD` is present, a numerical gradient is computed (expensive!).
-Molecular symmetry is exploited to speed up calculations.
-
-### Geometry Optimization with `xtb`
-
-To optimize geometries using xtb with gxtb as a driver:
-```
-xtb struc.xyz --driver "gxtb -grad -c xtbdriver.xyz" --opt
-```
-Or with a `coord` file in TURBOMOLE format:
-```
-xtb coord --driver "gxtb -grad -c xtbdriver.coord" --opt
-```
-
-💡 You may use `--opt loose` for faster convergence, as there is currently no analytical nuclear gradient — gradients are evaluated numerically and can be noisy.
-
-### Numerical Hessian
-
-```
-gxtb -hess
-```
-Computes a numerical Hessian (very expensive).
-
-## Current Coverage
-
-- Reasonably parameterized for elements Z = 1–58, 71–89, and 92
-- A revised dispersion model (`revD4`) is in progress and may slightly affect final results
-
-## 📊 Output and Analysis
-
-- All computed properties aim to approximate ωB97M-V/def2-TZVPPD
-- EEQ_BC charges mimic Hirshfeld charges from that reference
-- Use the `-molden` flag to write a `.molden` file with orbitals and basis info:
-```
-gxtb -molden
-```
-Useful for visualization and post-processing.
