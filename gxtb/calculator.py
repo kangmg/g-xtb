@@ -61,9 +61,9 @@ class gxTB(Calculator):
         
         # If there are system changes other than positions, clear old files
         # This ensures clean calculation when charge, cell, etc. change
-        non_position_changes = ['numbers', 'cell', 'pbc', 'initial_charges', 'initial_magmoms']
+        non_position_changes = {'numbers', 'cell', 'pbc', 'initial_charges', 'initial_magmoms'}
 
-        if non_position_changes:
+        if non_position_changes & set(system_changes):
             self.clear_files()
         
         # Write coordinate file
