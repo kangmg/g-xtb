@@ -7,7 +7,7 @@ from .calculator import gxTB
 __version__ = '0.0.1'
 
 
-def gxtb_install(verbose=True):
+def gxtb_install(verbose=True, overwrite=False):
     """
     Install g-xTB binary and parameter files
     Downloads necessary files from the official g-xTB repository
@@ -16,6 +16,8 @@ def gxtb_install(verbose=True):
     -----------
     verbose : bool, default=True
         If True, print detailed installation progress
+    overwrite : bool, default=False
+        If True, overwrite existing files.
     """
     home_dir = Path.home()
     bin_dir = home_dir / "bin"
@@ -48,6 +50,11 @@ def gxtb_install(verbose=True):
     for file_info in files_to_download:
         url = file_info['url']
         file_path = file_info['path']
+
+        if file_path.exists() and not overwrite:
+            if verbose:
+                print(f"  >  File already exists: {file_path}. Skipping.")
+            continue
         
         try:
             if verbose:
