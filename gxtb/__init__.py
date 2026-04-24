@@ -1,97 +1,139 @@
-import requests
-from pathlib import Path
-import os
+import platform
 import shutil
+import os
+import tarfile
+import zipfile
+import urllib.request
+from pathlib import Path
 from .calculator import gxTB
 
-__version__ = '0.0.1'
+__version__ = '0.1.0'
+
+# Platform → (tarball name, sha256 filename)
+_BINARY_VERSION = 'xtb-6.7.1-gxtb-210426'
+_BINARY_BASE_URL = 'https://github.com/grimme-lab/g-xtb/raw/main/binaries/'
+_BINARY_MAP = {
+    ('Linux',  'x86_64'): (f'{_BINARY_VERSION}-linux-x86_64.tar.xz',  'xtb'),
+    ('Darwin', 'arm64'):  (f'{_BINARY_VERSION}-macos-arm64.tar.gz',   'xtb'),
+    ('Windows','AMD64'):  (f'{_BINARY_VERSION}-windows-x86_64.zip',   'xtb.exe'),
+}
+
+_PARAM_FILES = ['.gxtb', '.eeq', '.basisq']
+_PARAM_URL_BASE = 'https://raw.githubusercontent.com/grimme-lab/g-xtb/main/parameters/'
 
 
-def gxtb_install(verbose=True, overwrite=False):
+def _detect_platform():
+    sys = platform.system()
+    mach = platform.machine()
+    return sys, mach
+
+
+def gxtb_install(install_dir=None, verbose=True, overwrite=False):
     """
-    Install g-xTB binary and parameter files
-    Downloads necessary files from the official g-xTB repository
-    
-    Parameters:
-    -----------
+    Download and install the g-xTB-enabled xtb binary and parameter files.
+
+    The binary is downloaded from the official grimme-lab/g-xtb repository
+    and placed in ``install_dir`` (default: ``~/bin``). Parameter files are
+    updated in the ``parameters/`` directory bundled with this package so
+    that GXTBHOME is set automatically by the calculator.
+
+    Parameters
+    ----------
+    install_dir : str or Path, optional
+        Directory to install the xtb binary. Defaults to ~/bin.
     verbose : bool, default=True
-        If True, print detailed installation progress
+        Print progress messages.
     overwrite : bool, default=False
-        If True, overwrite existing files.
+        Overwrite existing binary/parameter files.
     """
-    home_dir = Path.home()
-    bin_dir = home_dir / "bin"
+    sys_name, machine = _detect_platform()
+    key = (sys_name, machine)
 
-    # URLs for parameter files and binary
-    files_to_download = [
-        {
-            'url': 'https://raw.githubusercontent.com/kangmg/g-xtb/refs/heads/main/parameters/.gxtb',
-            'path': home_dir / '.gxtb'
-        },
-        {
-            'url': 'https://raw.githubusercontent.com/kangmg/g-xtb/refs/heads/main/parameters/.basisq',
-            'path': home_dir / '.basisq'
-        },
-        {
-            'url': 'https://raw.githubusercontent.com/kangmg/g-xtb/refs/heads/main/parameters/.eeq',
-            'path': home_dir / '.eeq'
-        },
-        {
-            'url': 'https://github.com/kangmg/g-xtb/raw/refs/heads/main/binary/gxtb',
-            'path': bin_dir / 'gxtb'
-        }
-    ]
-    
-    # Create bin directory if it doesn't exist
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    
-    print("Installing g-xTB files...")
-    
-    for file_info in files_to_download:
-        url = file_info['url']
-        file_path = file_info['path']
+    if key not in _BINARY_MAP:
+        raise RuntimeError(
+            f"No pre-built binary available for {sys_name}/{machine}. "
+            f"Supported: {list(_BINARY_MAP.keys())}"
+        )
 
-        if file_path.exists() and not overwrite:
-            if verbose:
-                print(f"  >  File already exists: {file_path}. Skipping.")
-            continue
-        
-        try:
-            if verbose:
-                print(f"Downloading {url} -> {file_path}")
-            
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-            
-            # Write file
-            with open(file_path, 'wb') as f:
-                f.write(response.content)
-            
-            # Make gxtb binary executable
-            if file_path.name == 'gxtb':
-                os.chmod(file_path, 0o755)
-                if verbose:
-                    print(f"Made {file_path} executable")
-                
-        except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Failed to download {url}: {e}")
-        except OSError as e:
-            raise RuntimeError(f"Failed to write {file_path}: {e}")
-    
-    # Add ~/bin to PATH if not already there
-    home_bin = f"{os.environ['HOME']}/bin"
-    if home_bin not in os.environ['PATH']:
-        os.environ['PATH'] += f":{home_bin}"
+    archive_name, exe_name = _BINARY_MAP[key]
+    install_dir = Path(install_dir) if install_dir else Path.home() / 'bin'
+    install_dir.mkdir(parents=True, exist_ok=True)
+    exe_path = install_dir / exe_name
+
+    # --- Download and extract binary ---
+    if exe_path.exists() and not overwrite:
         if verbose:
-            print(f"Added {home_bin} to PATH")
-    
-    print("g-xTB installation completed!")
-    print(f"Binary installed at: {bin_dir / 'gxtb'}")
-    print(f"Parameter files installed in: {home_dir}")
-    print(f"~/bin has been added to PATH for this session.")
+            print(f"Binary already exists: {exe_path}  (use overwrite=True to replace)")
+    else:
+        archive_url = _BINARY_URL = _BINARY_BASE_URL + archive_name
+        tmp_archive = install_dir / archive_name
+        if verbose:
+            print(f"Downloading {archive_url} ...")
+        urllib.request.urlretrieve(archive_url, tmp_archive)
+
+        if verbose:
+            print(f"Extracting {archive_name} ...")
+        if archive_name.endswith('.tar.xz') or archive_name.endswith('.tar.gz'):
+            with tarfile.open(tmp_archive) as tf:
+                # Extract the xtb executable (may be at bin/xtb inside the archive)
+                for member in tf.getmembers():
+                    if member.name.endswith('/' + exe_name) or member.name == exe_name:
+                        member.name = exe_name
+                        tf.extract(member, path=install_dir)
+                        break
+                else:
+                    raise RuntimeError(f"Could not find '{exe_name}' inside {archive_name}")
+        elif archive_name.endswith('.zip'):
+            with zipfile.ZipFile(tmp_archive) as zf:
+                for name in zf.namelist():
+                    if name.endswith('/' + exe_name) or name == exe_name:
+                        data = zf.read(name)
+                        with open(exe_path, 'wb') as f:
+                            f.write(data)
+                        break
+                else:
+                    raise RuntimeError(f"Could not find '{exe_name}' inside {archive_name}")
+
+        tmp_archive.unlink()
+        exe_path.chmod(0o755)
+        if verbose:
+            print(f"Installed: {exe_path}")
+
+    # --- Update bundled parameter files ---
+    param_dir = Path(__file__).parent.parent / 'parameters'
+    param_dir.mkdir(exist_ok=True)
+    for fname in _PARAM_FILES:
+        dest = param_dir / fname
+        if dest.exists() and not overwrite:
+            if verbose:
+                print(f"Parameter file exists: {dest}  (use overwrite=True to replace)")
+            continue
+        url = _PARAM_URL_BASE + fname
+        if verbose:
+            print(f"Downloading {url} ...")
+        urllib.request.urlretrieve(url, dest)
+        if verbose:
+            print(f"Updated: {dest}")
+
+    # --- Add install_dir to PATH for this session ---
+    home_bin = str(install_dir)
+    if home_bin not in os.environ.get('PATH', ''):
+        os.environ['PATH'] = home_bin + os.pathsep + os.environ.get('PATH', '')
+        if verbose:
+            print(f"Added {home_bin} to PATH for this session")
+
+    if verbose:
+        print(f"\ng-xTB installation complete.")
+        print(f"  Binary : {exe_path}")
+        print(f"  Params : {param_dir}")
+        print(f"  Usage  : gxTB(command='{exe_path}')")
 
 
-# Check if gxtb executable is available in PATH
-if shutil.which('gxtb') is None:
-    print("gxtb command not found. Installing...")
-    gxtb_install(verbose=True)
+def find_xtb_binary():
+    """
+    Return the path to the g-xTB-enabled xtb binary, or None if not found.
+
+    Searches PATH for 'xtb'. Does not verify that the binary actually
+    supports --gxtb; install via gxtb_install() to get the correct build.
+    """
+    return shutil.which('xtb')
