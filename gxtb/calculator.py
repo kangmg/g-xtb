@@ -7,7 +7,9 @@ quantum mechanical method approximating ωB97M-V/def2-TZVPPD properties).
 Requires the g-xTB-enabled xtb binary (xtb --gxtb).
 """
 import os
+import shutil
 import subprocess
+import tempfile
 import numpy as np
 from pathlib import Path
 from ase.calculators.calculator import Calculator, all_changes
@@ -26,7 +28,8 @@ class gxTB(Calculator):
     Parameters
     ----------
     keep_files : bool, default=False
-        Keep temporary xtb output files after calculation.
+        Keep working directory and output files after calculation.
+        When True, the path is printed if verbose=True.
     command : str, default='xtb'
         Path or name of the g-xTB-enabled xtb executable.
     charge : int, optional
@@ -34,9 +37,15 @@ class gxTB(Calculator):
     uhf : int, optional
         Number of unpaired electrons. Overridden by atoms.info['uhf'].
     verbose : bool, default=False
-        Print xtb stdout during calculation.
+        Print xtb stdout and working directory path during calculation.
     capture_stdout : bool, default=False
         Store raw xtb stdout in self.stdout after each calculation.
+    workdir : str or Path, optional
+        Working directory for xtb input/output files. If None (default),
+        a fresh temporary directory under the system's temp location is
+        created for each calculation and removed afterwards. If specified,
+        that directory is reused across calculations and only known output
+        files are removed on cleanup (not the directory itself).
     gxtbhome : str or Path, optional
         Path to directory containing g-xTB parameter files (.gxtb, .eeq,
         .basisq). Sets the GXTBHOME environment variable for xtb. Defaults
@@ -46,7 +55,8 @@ class gxTB(Calculator):
     implemented_properties = ['energy', 'forces', 'charges', 'dipole']
 
     def __init__(self, keep_files=False, command='xtb', charge=None, uhf=None,
-                 verbose=False, capture_stdout=False, gxtbhome=None, **kwargs):
+                 verbose=False, capture_stdout=False, workdir=None,
+                 gxtbhome=None, **kwargs):
         super().__init__(**kwargs)
         self.keep_files = keep_files
         self.command = command
@@ -54,6 +64,7 @@ class gxTB(Calculator):
         self.uhf = uhf
         self.verbose = verbose
         self.capture_stdout = capture_stdout
+        self.workdir = Path(workdir) if workdir is not None else None
         self.stdout = None
 
         if gxtbhome is not None:
@@ -72,24 +83,19 @@ class gxTB(Calculator):
             atoms = self.atoms
         super().calculate(atoms, properties, system_changes)
 
-        non_position_changes = {'numbers', 'cell', 'pbc', 'initial_charges', 'initial_magmoms'}
-        if non_position_changes & set(system_changes):
-            self.clear_files()
-
-        coord_file = 'TMP_gxtb.xyz'
-        write(coord_file, atoms, format='xyz')
-
         charge = atoms.info.get('charge', self.charge)
         uhf = atoms.info.get('uhf', self.uhf)
         grad = 'forces' in properties
 
+        work_dir, is_temp = self._make_work_dir()
         try:
-            cmd = self._build_command(coord_file, charge, uhf, ['--grad'] if grad else [])
-            self._run_command(cmd)
-            self._parse_results(atoms, parse_forces=grad)
+            write(str(work_dir / 'mol.xyz'), atoms, format='xyz')
+            flags = ['--grad'] if grad else []
+            cmd = self._build_command('mol.xyz', charge, uhf, flags)
+            self._run_command(cmd, work_dir)
+            self._parse_results(atoms, work_dir, parse_forces=grad)
         finally:
-            if not self.keep_files:
-                self.clear_files()
+            self._cleanup(work_dir, is_temp)
 
     # ------------------------------------------------------------------
     # Extended properties
@@ -117,22 +123,73 @@ class gxTB(Calculator):
         if atoms is None:
             raise ValueError("No atoms object provided")
 
-        coord_file = 'TMP_gxtb.xyz'
-        write(coord_file, atoms, format='xyz')
-
         charge = atoms.info.get('charge', self.charge)
         uhf = atoms.info.get('uhf', self.uhf)
-        cmd = self._build_command(coord_file, charge, uhf, ['--hess'])
 
+        work_dir, is_temp = self._make_work_dir()
         try:
-            self._run_command(cmd)
-            self._parse_results(atoms, parse_forces=True)
-            hessian = self._parse_hessian(atoms)
+            write(str(work_dir / 'mol.xyz'), atoms, format='xyz')
+            cmd = self._build_command('mol.xyz', charge, uhf, ['--hess'])
+            self._run_command(cmd, work_dir)
+            self._parse_results(atoms, work_dir, parse_forces=True)
+            hessian = self._parse_hessian(atoms, work_dir)
         finally:
-            if not self.keep_files:
-                self.clear_files()
+            self._cleanup(work_dir, is_temp)
 
         return hessian
+
+    # ------------------------------------------------------------------
+    # Working directory management
+    # ------------------------------------------------------------------
+
+    def _make_work_dir(self):
+        """
+        Return (work_dir: Path, is_temp: bool).
+
+        If self.workdir is None, create a fresh temp dir under the
+        system temp location. Otherwise create/reuse self.workdir.
+        """
+        if self.workdir is None:
+            return Path(tempfile.mkdtemp(prefix='gxtb_')), True
+        self.workdir.mkdir(parents=True, exist_ok=True)
+        return self.workdir, False
+
+    def _cleanup(self, work_dir, is_temp):
+        if self.keep_files:
+            if self.verbose:
+                print(f"Work directory kept: {work_dir}")
+            return
+        if is_temp:
+            shutil.rmtree(work_dir, ignore_errors=True)
+        else:
+            self._remove_known_files(work_dir)
+
+    def _remove_known_files(self, work_dir):
+        """Remove known xtb output files from an explicit directory."""
+        known = [
+            'mol.xyz',
+            'energy', 'gradient', 'charges', 'hessian',
+            'xtbrestart', 'wbo', 'bond_orders',
+            'vibspectrum', 'g98.out', 'molden.input',
+            'xtbopt.xyz', 'xtbopt.log', 'xtbhess.xyz', '.xtboptok',
+            'gfnff_adjacency', 'gfnff_topo',
+            '.CHRG', '.UHF', 'coord', 'gxtbrestart',
+        ]
+        for fname in known:
+            f = work_dir / fname
+            if f.exists():
+                try:
+                    f.unlink()
+                    if self.verbose:
+                        print(f"Removed: {f}")
+                except OSError:
+                    pass
+
+    # kept for backward compatibility
+    def clear_files(self):
+        """Remove known xtb output files from self.workdir (if set)."""
+        if self.workdir is not None:
+            self._remove_known_files(self.workdir)
 
     # ------------------------------------------------------------------
     # Command building and execution
@@ -148,18 +205,19 @@ class gxTB(Calculator):
             cmd += extra_flags
         return cmd
 
-    def _run_command(self, cmd):
+    def _run_command(self, cmd, work_dir):
         env = os.environ.copy()
         if self.gxtbhome and self.gxtbhome.exists():
             env['GXTBHOME'] = str(self.gxtbhome)
 
-        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True,
+            cwd=work_dir, env=env,
+        )
         raw_stdout = result.stdout
 
         if self.verbose:
             print(raw_stdout)
-        # Always keep stdout available for internal parsing; expose to user
-        # only when capture_stdout=True.
         self._raw_stdout = raw_stdout
         if self.capture_stdout:
             self.stdout = raw_stdout
@@ -174,27 +232,28 @@ class gxTB(Calculator):
     # Result parsing
     # ------------------------------------------------------------------
 
-    def _parse_results(self, atoms, parse_forces=False):
-        self.results['energy'] = self._parse_energy()
-        if parse_forces and os.path.exists('gradient'):
-            self.results['forces'] = self._parse_forces(atoms)
-        if os.path.exists('charges'):
-            self.results['charges'] = self._parse_charges(atoms)
+    def _parse_results(self, atoms, work_dir, parse_forces=False):
+        self.results['energy'] = self._parse_energy(work_dir)
+        if parse_forces and (work_dir / 'gradient').exists():
+            self.results['forces'] = self._parse_forces(atoms, work_dir)
+        if (work_dir / 'charges').exists():
+            self.results['charges'] = self._parse_charges(atoms, work_dir)
         dipole = self._parse_dipole_from_stdout(self._raw_stdout)
         if dipole is not None:
             self.results['dipole'] = dipole
 
-    def _parse_energy(self):
+    def _parse_energy(self, work_dir):
         """Parse total energy in eV; tries 'energy' file then stdout."""
-        if os.path.exists('energy'):
+        energy_file = work_dir / 'energy'
+        if energy_file.exists():
             try:
-                return self._parse_energy_file()
+                return self._parse_energy_file(energy_file)
             except Exception:
                 pass
         return self._parse_energy_stdout()
 
-    def _parse_energy_file(self):
-        with open('energy') as f:
+    def _parse_energy_file(self, energy_file):
+        with open(energy_file) as f:
             lines = f.readlines()
         in_section = False
         for line in lines:
@@ -223,14 +282,14 @@ class gxTB(Calculator):
                     pass
         raise RuntimeError("Could not parse TOTAL ENERGY from xtb stdout")
 
-    def _parse_forces(self, atoms):
+    def _parse_forces(self, atoms, work_dir):
         """
         Parse analytic forces from the 'gradient' file.
 
         The gradient file is turbomole format: coordinates in Bohr then
         gradients in Hartree/Bohr. Forces = -gradient, converted to eV/Å.
         """
-        with open('gradient') as f:
+        with open(work_dir / 'gradient') as f:
             lines = f.readlines()
 
         in_grad = False
@@ -281,9 +340,9 @@ class gxTB(Calculator):
         # F = -dE/dR; convert Hartree/Bohr → eV/Å
         return np.array(gradients) * (-Hartree / Bohr)
 
-    def _parse_charges(self, atoms):
+    def _parse_charges(self, atoms, work_dir):
         """Parse partial charges from the 'charges' file (one float per line)."""
-        with open('charges') as f:
+        with open(work_dir / 'charges') as f:
             values = [float(ln) for ln in f if ln.strip()]
         if len(values) != len(atoms):
             raise RuntimeError(
@@ -330,17 +389,18 @@ class gxTB(Calculator):
                     pass
         return None
 
-    def _parse_hessian(self, atoms):
+    def _parse_hessian(self, atoms, work_dir):
         """
         Parse Cartesian Hessian from the 'hessian' file.
 
         The file uses turbomole $hessian format with values in Hartree/Bohr².
         Returns a (3N, 3N) array in eV/Å².
         """
-        if not os.path.exists('hessian'):
+        hessian_file = work_dir / 'hessian'
+        if not hessian_file.exists():
             raise RuntimeError("'hessian' file not found after --hess run")
 
-        with open('hessian') as f:
+        with open(hessian_file) as f:
             content = f.read()
 
         values = []
@@ -365,29 +425,3 @@ class gxTB(Calculator):
 
         H = np.array(values).reshape(3 * n, 3 * n)
         return H * (Hartree / Bohr ** 2)  # Hartree/Bohr² → eV/Å²
-
-    # ------------------------------------------------------------------
-    # Cleanup
-    # ------------------------------------------------------------------
-
-    def clear_files(self):
-        """Remove temporary xtb output files. Can be called manually."""
-        temp_files = [
-            'TMP_gxtb.xyz',
-            # xtb standard outputs
-            'energy', 'gradient', 'charges', 'hessian',
-            'xtbrestart', 'wbo', 'bond_orders',
-            'vibspectrum', 'g98.out', 'molden.input',
-            'xtbopt.xyz', 'xtbopt.log', 'xtbhess.xyz', '.xtboptok',
-            'gfnff_adjacency', 'gfnff_topo',
-            # legacy gxtb files (kept for v1 backward compat)
-            '.CHRG', '.UHF', 'coord', 'gxtbrestart',
-        ]
-        for fname in temp_files:
-            if os.path.exists(fname):
-                try:
-                    os.remove(fname)
-                    if self.verbose:
-                        print(f"Removed: {fname}")
-                except OSError:
-                    pass
