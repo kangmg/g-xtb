@@ -70,8 +70,8 @@ class gxTB(Calculator):
         if gxtbhome is not None:
             self.gxtbhome = Path(gxtbhome)
         else:
-            # parameters/ directory bundled two levels up from this file
-            self.gxtbhome = Path(__file__).parent.parent / 'parameters'
+            # parameters/ bundled inside the package directory
+            self.gxtbhome = Path(__file__).parent / 'parameters'
 
     # ------------------------------------------------------------------
     # Core ASE interface

@@ -1,31 +1,46 @@
+import hashlib
+import os
 import platform
 import shutil
-import os
 import tarfile
-import zipfile
 import urllib.request
+import urllib.error
+import zipfile
 from pathlib import Path
 from .calculator import gxTB
 
 __version__ = '0.1.0'
 
-# Platform → (tarball name, sha256 filename)
+# Bundled parameter files live inside the package so they are always
+# available after a normal `pip install` (wheel or editable).
+_PARAM_DIR = Path(__file__).parent / 'parameters'
+
 _BINARY_VERSION = 'xtb-6.7.1-gxtb-210426'
 _BINARY_BASE_URL = 'https://github.com/grimme-lab/g-xtb/raw/main/binaries/'
+
+# (platform.system(), platform.machine()) → (archive filename, exe name)
+# Intel-Mac is intentionally absent: the upstream does not ship an x86_64
+# macOS binary; users on Intel Macs should build from source.
 _BINARY_MAP = {
-    ('Linux',  'x86_64'): (f'{_BINARY_VERSION}-linux-x86_64.tar.xz',  'xtb'),
-    ('Darwin', 'arm64'):  (f'{_BINARY_VERSION}-macos-arm64.tar.gz',   'xtb'),
-    ('Windows','AMD64'):  (f'{_BINARY_VERSION}-windows-x86_64.zip',   'xtb.exe'),
+    ('Linux',   'x86_64'): (f'{_BINARY_VERSION}-linux-x86_64.tar.xz', 'xtb'),
+    ('Darwin',  'arm64'):  (f'{_BINARY_VERSION}-macos-arm64.tar.gz',  'xtb'),
+    ('Windows', 'AMD64'):  (f'{_BINARY_VERSION}-windows-x86_64.zip',  'xtb.exe'),
 }
 
 _PARAM_FILES = ['.gxtb', '.eeq', '.basisq']
 _PARAM_URL_BASE = 'https://raw.githubusercontent.com/grimme-lab/g-xtb/main/parameters/'
 
 
-def _detect_platform():
-    sys = platform.system()
-    mach = platform.machine()
-    return sys, mach
+def _platform_key():
+    return platform.system(), platform.machine()
+
+
+def _sha256_of_file(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(65536), b''):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def gxtb_install(install_dir=None, verbose=True, overwrite=False):
@@ -34,8 +49,8 @@ def gxtb_install(install_dir=None, verbose=True, overwrite=False):
 
     The binary is downloaded from the official grimme-lab/g-xtb repository
     and placed in ``install_dir`` (default: ``~/bin``). Parameter files are
-    updated in the ``parameters/`` directory bundled with this package so
-    that GXTBHOME is set automatically by the calculator.
+    updated inside the ``gxtb/parameters/`` package directory so that
+    GXTBHOME is resolved automatically by the calculator.
 
     Parameters
     ----------
@@ -46,13 +61,13 @@ def gxtb_install(install_dir=None, verbose=True, overwrite=False):
     overwrite : bool, default=False
         Overwrite existing binary/parameter files.
     """
-    sys_name, machine = _detect_platform()
+    sys_name, machine = _platform_key()
     key = (sys_name, machine)
 
     if key not in _BINARY_MAP:
         raise RuntimeError(
             f"No pre-built binary available for {sys_name}/{machine}. "
-            f"Supported: {list(_BINARY_MAP.keys())}"
+            f"Supported platforms: {list(_BINARY_MAP.keys())}"
         )
 
     archive_name, exe_name = _BINARY_MAP[key]
@@ -60,50 +75,75 @@ def gxtb_install(install_dir=None, verbose=True, overwrite=False):
     install_dir.mkdir(parents=True, exist_ok=True)
     exe_path = install_dir / exe_name
 
-    # --- Download and extract binary ---
+    # --- Download, verify, and extract binary ---
     if exe_path.exists() and not overwrite:
         if verbose:
             print(f"Binary already exists: {exe_path}  (use overwrite=True to replace)")
     else:
-        archive_url = _BINARY_URL = _BINARY_BASE_URL + archive_name
+        archive_url = _BINARY_BASE_URL + archive_name
+        sha_url = archive_url + '.sha256'
         tmp_archive = install_dir / archive_name
+
         if verbose:
             print(f"Downloading {archive_url} ...")
-        urllib.request.urlretrieve(archive_url, tmp_archive)
+        try:
+            urllib.request.urlretrieve(archive_url, tmp_archive)
 
-        if verbose:
-            print(f"Extracting {archive_name} ...")
-        if archive_name.endswith('.tar.xz') or archive_name.endswith('.tar.gz'):
-            with tarfile.open(tmp_archive) as tf:
-                # Extract the xtb executable (may be at bin/xtb inside the archive)
-                for member in tf.getmembers():
-                    if member.name.endswith('/' + exe_name) or member.name == exe_name:
-                        member.name = exe_name
-                        tf.extract(member, path=install_dir)
-                        break
-                else:
-                    raise RuntimeError(f"Could not find '{exe_name}' inside {archive_name}")
-        elif archive_name.endswith('.zip'):
-            with zipfile.ZipFile(tmp_archive) as zf:
-                for name in zf.namelist():
-                    if name.endswith('/' + exe_name) or name == exe_name:
-                        data = zf.read(name)
-                        with open(exe_path, 'wb') as f:
-                            f.write(data)
-                        break
-                else:
-                    raise RuntimeError(f"Could not find '{exe_name}' inside {archive_name}")
+            # Verify SHA256 checksum when available
+            try:
+                with urllib.request.urlopen(sha_url) as resp:
+                    expected_sha = resp.read().decode().strip().split()[0]
+                actual_sha = _sha256_of_file(tmp_archive)
+                if actual_sha != expected_sha:
+                    raise RuntimeError(
+                        f"SHA256 mismatch for {archive_name}: "
+                        f"expected {expected_sha}, got {actual_sha}"
+                    )
+                if verbose:
+                    print("SHA256 verified OK")
+            except urllib.error.URLError:
+                if verbose:
+                    print("Warning: could not fetch SHA256 checksum; skipping verification")
 
-        tmp_archive.unlink()
+            if verbose:
+                print(f"Extracting {archive_name} ...")
+
+            if archive_name.endswith(('.tar.xz', '.tar.gz')):
+                with tarfile.open(tmp_archive) as tf:
+                    for member in tf.getmembers():
+                        if member.name == exe_name or member.name.endswith('/' + exe_name):
+                            src = tf.extractfile(member)
+                            if src is None:
+                                continue
+                            with open(exe_path, 'wb') as dst:
+                                shutil.copyfileobj(src, dst)
+                            break
+                    else:
+                        raise RuntimeError(
+                            f"Could not find '{exe_name}' inside {archive_name}"
+                        )
+            elif archive_name.endswith('.zip'):
+                with zipfile.ZipFile(tmp_archive) as zf:
+                    for name in zf.namelist():
+                        if name == exe_name or name.endswith('/' + exe_name):
+                            with zf.open(name) as src, open(exe_path, 'wb') as dst:
+                                shutil.copyfileobj(src, dst)
+                            break
+                    else:
+                        raise RuntimeError(
+                            f"Could not find '{exe_name}' inside {archive_name}"
+                        )
+        finally:
+            tmp_archive.unlink(missing_ok=True)
+
         exe_path.chmod(0o755)
         if verbose:
             print(f"Installed: {exe_path}")
 
     # --- Update bundled parameter files ---
-    param_dir = Path(__file__).parent.parent / 'parameters'
-    param_dir.mkdir(exist_ok=True)
+    _PARAM_DIR.mkdir(exist_ok=True)
     for fname in _PARAM_FILES:
-        dest = param_dir / fname
+        dest = _PARAM_DIR / fname
         if dest.exists() and not overwrite:
             if verbose:
                 print(f"Parameter file exists: {dest}  (use overwrite=True to replace)")
@@ -116,16 +156,16 @@ def gxtb_install(install_dir=None, verbose=True, overwrite=False):
             print(f"Updated: {dest}")
 
     # --- Add install_dir to PATH for this session ---
-    home_bin = str(install_dir)
-    if home_bin not in os.environ.get('PATH', ''):
-        os.environ['PATH'] = home_bin + os.pathsep + os.environ.get('PATH', '')
+    path_dirs = os.environ.get('PATH', '').split(os.pathsep)
+    if str(install_dir) not in path_dirs:
+        os.environ['PATH'] = str(install_dir) + os.pathsep + os.environ.get('PATH', '')
         if verbose:
-            print(f"Added {home_bin} to PATH for this session")
+            print(f"Added {install_dir} to PATH for this session")
 
     if verbose:
         print(f"\ng-xTB installation complete.")
         print(f"  Binary : {exe_path}")
-        print(f"  Params : {param_dir}")
+        print(f"  Params : {_PARAM_DIR}")
         print(f"  Usage  : gxTB(command='{exe_path}')")
 
 

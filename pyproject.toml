@@ -25,3 +25,6 @@ dependencies = [
 
 [tool.setuptools]
 packages = ["gxtb"]
+
+[tool.setuptools.package-data]
+gxtb = ["parameters/.*"]
