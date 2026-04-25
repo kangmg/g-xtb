@@ -9,18 +9,21 @@ from ase import Atoms
 
 from .calculator import gxTB
 
+_VALID_TASKS = ('energy', 'forces', 'hessian')
+
 
 def benchmark_parallel(
     atoms: Atoms,
     nprocs_list: List[int],
+    task: str = 'energy',
     repeat: int = 1,
     warmup: bool = False,
     plot: bool = False,
     calc_kwargs: Optional[dict] = None,
 ) -> Dict[int, float]:
     """
-    Measure wall-clock time for a single-point g-xTB calculation across
-    different OpenMP thread counts and report speedup and efficiency.
+    Measure wall-clock time for a g-xTB calculation across different OpenMP
+    thread counts and report speedup and efficiency.
 
     Parameters
     ----------
@@ -29,6 +32,11 @@ def benchmark_parallel(
     nprocs_list : list of int
         Thread counts to test. The first entry is used as the baseline
         for speedup calculation.
+    task : {'energy', 'forces', 'hessian'}, default='energy'
+        Which calculation to benchmark:
+        - 'energy'  : single-point energy only (xtb --gxtb)
+        - 'forces'  : energy + analytic gradient (xtb --gxtb --grad)
+        - 'hessian' : numerical Hessian via analytic gradients (xtb --gxtb --hess)
     repeat : int, default=1
         Number of timed repetitions per thread count. The average is
         reported.
@@ -49,19 +57,23 @@ def benchmark_parallel(
 
     Examples
     --------
-    >>> results = benchmark_parallel(atoms, [1, 2, 4, 8], repeat=3, plot=True)
+    >>> results = benchmark_parallel(atoms, [1, 2, 4, 8], task='energy', repeat=3)
+    >>> results = benchmark_parallel(atoms, [1, 2, 4, 8], task='forces', repeat=3)
+    >>> results = benchmark_parallel(atoms, [1, 2, 4],    task='hessian', repeat=2, plot=True)
     """
     if not nprocs_list:
         raise ValueError("nprocs_list must not be empty")
     if repeat < 1:
         raise ValueError("repeat must be >= 1")
+    if task not in _VALID_TASKS:
+        raise ValueError(f"task must be one of {_VALID_TASKS}, got {task!r}")
 
     kw = dict(calc_kwargs or {})
     kw.pop('nprocs', None)  # nprocs is controlled by nprocs_list
 
     if warmup:
-        print("Running warmup calculation ...", flush=True)
-        _time_single(atoms, nprocs_list[0], kw)
+        print(f"Running warmup ({task}) ...", flush=True)
+        _time_single(atoms, nprocs_list[0], task, kw)
 
     timings: Dict[int, float] = {}
     for nprocs in nprocs_list:
@@ -71,34 +83,40 @@ def benchmark_parallel(
                 f"  nprocs={nprocs}  run {i + 1}/{repeat} ...",
                 end='\r', flush=True,
             )
-            runs.append(_time_single(atoms, nprocs, kw))
+            runs.append(_time_single(atoms, nprocs, task, kw))
         timings[nprocs] = sum(runs) / len(runs)
 
     print()  # clear the \r line
-    _print_table(atoms, timings, repeat)
+    _print_table(atoms, timings, task, repeat)
 
     if plot:
-        _plot(timings)
+        _plot(timings, task)
 
     return timings
 
 
-def _time_single(atoms: Atoms, nprocs: int, calc_kwargs: dict) -> float:
+def _time_single(atoms: Atoms, nprocs: int, task: str, calc_kwargs: dict) -> float:
     a = atoms.copy()
-    a.calc = gxTB(nprocs=nprocs, **calc_kwargs)
+    calc = gxTB(nprocs=nprocs, **calc_kwargs)
+    a.calc = calc
     t0 = time.perf_counter()
-    a.get_potential_energy()
+    if task == 'energy':
+        a.get_potential_energy()
+    elif task == 'forces':
+        a.get_forces()
+    elif task == 'hessian':
+        calc.get_hessian(a)
     return time.perf_counter() - t0
 
 
-def _print_table(atoms: Atoms, timings: Dict[int, float], repeat: int) -> None:
+def _print_table(atoms: Atoms, timings: Dict[int, float], task: str, repeat: int) -> None:
     nprocs_list = sorted(timings)
     t_base = timings[nprocs_list[0]]
     formula = atoms.get_chemical_formula()
     n_atoms = len(atoms)
 
     col_w = 45
-    print(f"\nParallel Scaling Benchmark")
+    print(f"\nParallel Scaling Benchmark  [{task}]")
     print(f"Molecule: {formula}  |  {n_atoms} atoms  |  repeat={repeat}")
     print("─" * col_w)
     print(f" {'nprocs':>6} │ {'time (s)':>10} │ {'speedup':>8} │ {'efficiency':>10}")
@@ -113,7 +131,7 @@ def _print_table(atoms: Atoms, timings: Dict[int, float], repeat: int) -> None:
     print("─" * col_w)
 
 
-def _plot(timings: Dict[int, float]) -> None:
+def _plot(timings: Dict[int, float], task: str) -> None:
     try:
         import matplotlib.pyplot as plt
     except ImportError:
@@ -147,6 +165,6 @@ def _plot(timings: Dict[int, float]) -> None:
     ax2.legend()
     ax2.grid(True, alpha=0.3)
 
-    plt.suptitle('g-xTB Parallel Scaling', y=1.02)
+    plt.suptitle(f'g-xTB Parallel Scaling  [{task}]', y=1.02)
     plt.tight_layout()
     plt.show()
