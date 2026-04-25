@@ -813,6 +813,29 @@ class TestBenchmarkParallel(unittest.TestCase):
         with self.assertRaises(ValueError):
             benchmark_parallel(self.atoms, [1], repeat=0)
 
+    def test_invalid_task_raises(self):
+        from gxtb.benchmark import benchmark_parallel
+        with self.assertRaises(ValueError):
+            benchmark_parallel(self.atoms, [1], task='invalid')
+
+    def test_task_energy_default(self):
+        from gxtb.benchmark import benchmark_parallel
+        with self._patch_time_single([1.0]):
+            result = benchmark_parallel(self.atoms, [1])
+        self.assertIn(1, result)
+
+    def test_task_forces(self):
+        from gxtb.benchmark import benchmark_parallel
+        with self._patch_time_single([1.0]):
+            result = benchmark_parallel(self.atoms, [1], task='forces')
+        self.assertIn(1, result)
+
+    def test_task_hessian(self):
+        from gxtb.benchmark import benchmark_parallel
+        with self._patch_time_single([1.0]):
+            result = benchmark_parallel(self.atoms, [1], task='hessian')
+        self.assertIn(1, result)
+
     def test_average_over_repeat(self):
         from gxtb.benchmark import benchmark_parallel
         with self._patch_time_single([4.0, 2.0]):
@@ -829,7 +852,7 @@ class TestBenchmarkParallel(unittest.TestCase):
         from gxtb.benchmark import benchmark_parallel
         call_log = []
 
-        def recording_time_single(atoms, nprocs, kw):
+        def recording_time_single(atoms, nprocs, task, kw):
             call_log.append(nprocs)
             return 1.0
 
@@ -845,7 +868,7 @@ class TestBenchmarkParallel(unittest.TestCase):
         from gxtb.benchmark import benchmark_parallel
         received_kw = []
 
-        def recording_time_single(atoms, nprocs, kw):
+        def recording_time_single(atoms, nprocs, task, kw):
             received_kw.append(dict(kw))
             return 1.0
 
@@ -870,6 +893,33 @@ class TestBenchmarkParallel(unittest.TestCase):
         # This test simply asserts it doesn't raise an exception
         # (matplotlib may or may not be installed in the test environment)
 
+    def test_time_single_calls_correct_method(self):
+        from gxtb.benchmark import _time_single
+        calls = []
+
+        def fake_calc_cls(nprocs, **kw):
+            calc = MagicMock()
+            calc.get_hessian = MagicMock(return_value=None)
+            calls.append(calc)
+            return calc
+
+        atoms = _make_atoms()
+
+        for task, attr in [('energy', 'get_potential_energy'),
+                            ('forces', 'get_forces'),
+                            ('hessian', 'get_hessian')]:
+            calls.clear()
+            with patch('gxtb.benchmark.gxTB', side_effect=fake_calc_cls):
+                _time_single(atoms, 1, task, {})
+            self.assertEqual(len(calls), 1)
+            mock_calc = calls[0]
+            if task == 'hessian':
+                mock_calc.get_hessian.assert_called_once()
+            elif task == 'forces':
+                mock_calc.get_forces.assert_called_once()
+            else:
+                mock_calc.get_potential_energy.assert_called_once()
+
     def test_print_table_outputs_speedup(self, capsys=None):
         """_print_table should produce speedup column in stdout."""
         from gxtb.benchmark import _print_table
@@ -878,10 +928,11 @@ class TestBenchmarkParallel(unittest.TestCase):
         timings = {1: 4.0, 2: 2.0, 4: 1.5}
         buf = io.StringIO()
         with redirect_stdout(buf):
-            _print_table(self.atoms, timings, repeat=3)
+            _print_table(self.atoms, timings, 'energy', repeat=3)
         output = buf.getvalue()
         self.assertIn('speedup', output.lower())
         self.assertIn('efficiency', output.lower())
+        self.assertIn('energy', output.lower())
         # nprocs values appear in table
         self.assertIn('1', output)
         self.assertIn('2', output)
