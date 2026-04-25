@@ -289,8 +289,7 @@ class gxTB(Calculator):
 
     def _run_command(self, cmd, work_dir):
         env = os.environ.copy()
-        if self.nprocs > 1:
-            env['OMP_NUM_THREADS'] = str(self.nprocs)
+        env['OMP_NUM_THREADS'] = str(self.nprocs)
         if self.gxtbhome.exists():
             env['GXTBHOME'] = str(self.gxtbhome)
         else:

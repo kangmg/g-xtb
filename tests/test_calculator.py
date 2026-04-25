@@ -183,28 +183,35 @@ class TestBuildCommand(unittest.TestCase):
         cmd = c._build_command('mol.xyz', None, None, [])
         self.assertNotIn('--parallel', cmd)
 
-    def test_nprocs_sets_omp_env(self):
-        import os
-        c = gxTB(nprocs=8)
-        recorded_env = {}
-
-        real_run = subprocess.run
-
-        def fake_subprocess(cmd, **kwargs):
+    def _fake_subprocess(self, recorded_env):
+        def fake(cmd, **kwargs):
             recorded_env.update(kwargs.get('env', {}))
             m = MagicMock()
             m.returncode = 0
             m.stdout = '          TOTAL ENERGY              -10.0 Eh\n'
             m.stderr = ''
             return m
+        return fake
 
-        with patch('gxtb.calculator.subprocess.run', side_effect=fake_subprocess):
+    def test_nprocs_sets_omp_env(self):
+        c = gxTB(nprocs=8)
+        recorded_env = {}
+        with patch('gxtb.calculator.subprocess.run', side_effect=self._fake_subprocess(recorded_env)):
             try:
                 c._run_command(['xtb', 'mol.xyz', '--gxtb'], Path('/tmp'))
             except Exception:
                 pass
-
         self.assertEqual(recorded_env.get('OMP_NUM_THREADS'), '8')
+
+    def test_nprocs_1_still_sets_omp_env(self):
+        c = gxTB(nprocs=1)
+        recorded_env = {}
+        with patch('gxtb.calculator.subprocess.run', side_effect=self._fake_subprocess(recorded_env)):
+            try:
+                c._run_command(['xtb', 'mol.xyz', '--gxtb'], Path('/tmp'))
+            except Exception:
+                pass
+        self.assertEqual(recorded_env.get('OMP_NUM_THREADS'), '1')
 
 
 # ---------------------------------------------------------------------------
