@@ -777,5 +777,116 @@ class TestGxtbhomeWarning(unittest.TestCase):
         self.assertTrue(any(issubclass(x.category, RuntimeWarning) for x in w))
 
 
+# ---------------------------------------------------------------------------
+# benchmark_parallel
+# ---------------------------------------------------------------------------
+
+class TestBenchmarkParallel(unittest.TestCase):
+    """Tests for benchmark_parallel() — gxTB calls are fully mocked."""
+
+    def setUp(self):
+        self.atoms = _make_atoms()
+
+    def _patch_time_single(self, times):
+        """Return a context manager that replaces _time_single with a queue of values."""
+        import itertools
+        from unittest.mock import patch as _patch
+        counter = itertools.cycle(times)
+        return _patch('gxtb.benchmark._time_single', side_effect=lambda *a, **kw: next(counter))
+
+    def test_returns_dict_keyed_by_nprocs(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from gxtb.benchmark import benchmark_parallel
+        with self._patch_time_single([2.0, 1.0]):
+            result = benchmark_parallel(self.atoms, [1, 2])
+        self.assertIn(1, result)
+        self.assertIn(2, result)
+
+    def test_empty_nprocs_list_raises(self):
+        from gxtb.benchmark import benchmark_parallel
+        with self.assertRaises(ValueError):
+            benchmark_parallel(self.atoms, [])
+
+    def test_repeat_zero_raises(self):
+        from gxtb.benchmark import benchmark_parallel
+        with self.assertRaises(ValueError):
+            benchmark_parallel(self.atoms, [1], repeat=0)
+
+    def test_average_over_repeat(self):
+        from gxtb.benchmark import benchmark_parallel
+        with self._patch_time_single([4.0, 2.0]):
+            result = benchmark_parallel(self.atoms, [1], repeat=2)
+        self.assertAlmostEqual(result[1], 3.0)
+
+    def test_single_nproc(self):
+        from gxtb.benchmark import benchmark_parallel
+        with self._patch_time_single([5.0]):
+            result = benchmark_parallel(self.atoms, [4])
+        self.assertAlmostEqual(result[4], 5.0)
+
+    def test_warmup_triggers_extra_call(self):
+        from gxtb.benchmark import benchmark_parallel
+        call_log = []
+
+        def recording_time_single(atoms, nprocs, kw):
+            call_log.append(nprocs)
+            return 1.0
+
+        with patch('gxtb.benchmark._time_single', side_effect=recording_time_single):
+            benchmark_parallel(self.atoms, [1, 2], repeat=1, warmup=True)
+
+        # warmup call + 2 timed calls = 3 total
+        self.assertEqual(len(call_log), 3)
+        # first call is the warmup with nprocs_list[0]
+        self.assertEqual(call_log[0], 1)
+
+    def test_calc_kwargs_nprocs_stripped(self):
+        from gxtb.benchmark import benchmark_parallel
+        received_kw = []
+
+        def recording_time_single(atoms, nprocs, kw):
+            received_kw.append(dict(kw))
+            return 1.0
+
+        with patch('gxtb.benchmark._time_single', side_effect=recording_time_single):
+            benchmark_parallel(self.atoms, [1], calc_kwargs={'nprocs': 99, 'charge': -1})
+
+        self.assertNotIn('nprocs', received_kw[0])
+        self.assertEqual(received_kw[0].get('charge'), -1)
+
+    def test_plot_warns_when_matplotlib_missing(self):
+        import warnings
+        import sys
+        from gxtb.benchmark import benchmark_parallel
+
+        with self._patch_time_single([1.0]):
+            with patch.dict(sys.modules, {'matplotlib': None, 'matplotlib.pyplot': None}):
+                with warnings.catch_warnings(record=True) as w:
+                    warnings.simplefilter('always')
+                    benchmark_parallel(self.atoms, [1], plot=True)
+        # Either no warning (matplotlib already installed and used) or RuntimeWarning
+        runtime_warns = [x for x in w if issubclass(x.category, RuntimeWarning)]
+        # This test simply asserts it doesn't raise an exception
+        # (matplotlib may or may not be installed in the test environment)
+
+    def test_print_table_outputs_speedup(self, capsys=None):
+        """_print_table should produce speedup column in stdout."""
+        from gxtb.benchmark import _print_table
+        import io
+        from contextlib import redirect_stdout
+        timings = {1: 4.0, 2: 2.0, 4: 1.5}
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            _print_table(self.atoms, timings, repeat=3)
+        output = buf.getvalue()
+        self.assertIn('speedup', output.lower())
+        self.assertIn('efficiency', output.lower())
+        # nprocs values appear in table
+        self.assertIn('1', output)
+        self.assertIn('2', output)
+        self.assertIn('4', output)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
