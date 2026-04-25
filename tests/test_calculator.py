@@ -738,6 +738,49 @@ class TestGetHessianMocked(unittest.TestCase):
         calc.get_hessian(atoms)
         self.assertIn('energy', calc.results)
 
+    def test_default_acc_in_command(self):
+        atoms = _make_atoms()
+        calc = gxTB()
+        recorded_cmd = []
+
+        def fake_run(cmd, work_dir):
+            recorded_cmd.extend(cmd)
+            n = len(atoms)
+            size = 3 * n
+            (work_dir / 'energy').write_text('$energy\n 1  -10.0\n$end\n')
+            (work_dir / 'charges').write_text('\n'.join(['0.0'] * n) + '\n')
+            hess_vals = [str(float(i)) for i in range(size * size)]
+            lines = ['  ' + '  '.join(hess_vals[i:i+5]) for i in range(0, len(hess_vals), 5)]
+            (work_dir / 'hessian').write_text('$hessian\n' + '\n'.join(lines) + '\n$end\n')
+            calc._raw_stdout = '          TOTAL ENERGY              -10.0 Eh\n'
+
+        calc._run_command = fake_run
+        calc.get_hessian(atoms)
+        self.assertIn('--acc', recorded_cmd)
+        acc_idx = recorded_cmd.index('--acc')
+        self.assertEqual(recorded_cmd[acc_idx + 1], '0.1')
+
+    def test_custom_acc_in_command(self):
+        atoms = _make_atoms()
+        calc = gxTB()
+        recorded_cmd = []
+
+        def fake_run(cmd, work_dir):
+            recorded_cmd.extend(cmd)
+            n = len(atoms)
+            size = 3 * n
+            (work_dir / 'energy').write_text('$energy\n 1  -10.0\n$end\n')
+            (work_dir / 'charges').write_text('\n'.join(['0.0'] * n) + '\n')
+            hess_vals = [str(float(i)) for i in range(size * size)]
+            lines = ['  ' + '  '.join(hess_vals[i:i+5]) for i in range(0, len(hess_vals), 5)]
+            (work_dir / 'hessian').write_text('$hessian\n' + '\n'.join(lines) + '\n$end\n')
+            calc._raw_stdout = '          TOTAL ENERGY              -10.0 Eh\n'
+
+        calc._run_command = fake_run
+        calc.get_hessian(atoms, acc=0.01)
+        acc_idx = recorded_cmd.index('--acc')
+        self.assertEqual(recorded_cmd[acc_idx + 1], '0.01')
+
     def test_no_atoms_raises(self):
         calc = gxTB()
         with self.assertRaises(ValueError):

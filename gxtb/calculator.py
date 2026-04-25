@@ -118,18 +118,23 @@ class gxTB(Calculator):
     # Extended properties
     # ------------------------------------------------------------------
 
-    def get_hessian(self, atoms=None) -> np.ndarray:
+    def get_hessian(self, atoms=None, acc=0.1) -> np.ndarray:
         """
         Compute and return the full Cartesian Hessian.
 
         Runs ``xtb --gxtb --hess`` (numerical Hessian using analytic
-        gradients) and also updates self.results with energy, forces,
-        charges, and dipole moment from the same run.
+        gradients) and also updates self.results with energy, charges,
+        and dipole moment from the same run.
 
         Parameters
         ----------
         atoms : ase.Atoms, optional
             If None, uses self.atoms.
+        acc : float, default=0.1
+            Multiplicative accuracy factor for SCF convergence (``--acc``).
+            Tighter convergence improves numerical Hessian quality.
+            Recommended range: 0.1–0.01. Default 1.0 in xtb; here set to
+            0.1 following the xtb documentation recommendation for Hessians.
 
         Returns
         -------
@@ -146,7 +151,8 @@ class gxTB(Calculator):
         work_dir, is_temp = self._make_work_dir()
         try:
             write(str(work_dir / 'mol.xyz'), atoms, format='xyz')
-            cmd = self._build_command('mol.xyz', charge, uhf, ['--hess'])
+            flags = ['--hess', '--acc', str(acc)]
+            cmd = self._build_command('mol.xyz', charge, uhf, flags)
             self._run_command(cmd, work_dir)
             # --hess does not write a gradient file; parse energy/charges/dipole only
             self._parse_results(atoms, work_dir, parse_forces=False)
