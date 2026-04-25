@@ -23,6 +23,9 @@ dependencies = [
 [project.urls]
 "Homepage" = "https://github.com/kangmg/g-xtb"
 
+[project.scripts]
+gxtb-install = "gxtb.cli:_install"
+
 [tool.setuptools]
 packages = ["gxtb"]
 
