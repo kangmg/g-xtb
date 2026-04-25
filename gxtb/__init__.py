@@ -17,7 +17,7 @@ __version__ = '0.1.0'
 _PARAM_DIR = Path(__file__).parent / 'parameters'
 
 _BINARY_VERSION = 'xtb-6.7.1-gxtb-210426'
-_BINARY_BASE_URL = 'https://github.com/grimme-lab/g-xtb/raw/main/binaries/'
+_BINARY_BASE_URL = 'https://github.com/kangmg/g-xtb/raw/main/binaries/'
 
 # (platform.system(), platform.machine()) → (archive filename, exe name)
 # Intel-Mac is intentionally absent: the upstream does not ship an x86_64
@@ -29,7 +29,7 @@ _BINARY_MAP = {
 }
 
 _PARAM_FILES = ['.gxtb', '.eeq', '.basisq']
-_PARAM_URL_BASE = 'https://raw.githubusercontent.com/grimme-lab/g-xtb/main/parameters/'
+_PARAM_URL_BASE = 'https://raw.githubusercontent.com/kangmg/g-xtb/main/parameters/'
 
 _LFS_POINTER_MAGIC = b'version https://git-lfs.github.com/spec/v1'
 
@@ -57,7 +57,7 @@ def _check_lfs_pointer(path):
             raise RuntimeError(
                 f"Downloaded file is a Git LFS pointer, not the actual binary.\n"
                 f"Try downloading directly from:\n"
-                f"  https://media.githubusercontent.com/media/grimme-lab/g-xtb/main/binaries/{path.name}"
+                f"  https://media.githubusercontent.com/media/kangmg/g-xtb/main/binaries/{path.name}"
             )
     except OSError:
         pass
@@ -67,10 +67,10 @@ def gxtb_install(install_dir=None, verbose=True, overwrite=False):
     """
     Download and install the g-xTB-enabled xtb binary and parameter files.
 
-    The binary is downloaded from the official grimme-lab/g-xtb repository
-    and placed in ``install_dir`` (default: ``~/bin``). Parameter files are
-    updated inside the ``gxtb/parameters/`` package directory so that
-    GXTBHOME is resolved automatically by the calculator.
+    The binary is downloaded from the kangmg/g-xtb repository and placed in
+    ``install_dir`` (default: ``~/bin``). Parameter files are updated inside
+    the ``gxtb/parameters/`` package directory so that GXTBHOME is resolved
+    automatically by the calculator.
 
     Parameters
     ----------
