@@ -69,7 +69,8 @@ class TestInit(unittest.TestCase):
         self.assertIn('energy', gxTB.implemented_properties)
         self.assertIn('forces', gxTB.implemented_properties)
         self.assertIn('charges', gxTB.implemented_properties)
-        self.assertIn('dipole', gxTB.implemented_properties)
+        # dipole is excluded: parsed from stdout on best-effort basis only
+        self.assertNotIn('dipole', gxTB.implemented_properties)
 
 
 # ---------------------------------------------------------------------------
@@ -564,7 +565,7 @@ class TestCalculateMocked(unittest.TestCase):
         self.assertEqual(len(charges), 3)
         self.assertAlmostEqual(charges.sum(), 0.0, places=5)
 
-    def test_dipole_populated(self):
+    def test_dipole_populated_in_results(self):
         atoms = _make_atoms()
         calc = gxTB()
         self._patch_run(calc, grad=False)
@@ -573,6 +574,23 @@ class TestCalculateMocked(unittest.TestCase):
         dipole = calc.results.get('dipole')
         self.assertIsNotNone(dipole)
         self.assertEqual(len(dipole), 3)
+
+    def test_get_dipole_moment_returns_cached(self):
+        atoms = _make_atoms()
+        calc = gxTB()
+        self._patch_run(calc, grad=False)
+        atoms.calc = calc
+        atoms.get_potential_energy()
+        dipole = calc.get_dipole_moment()
+        self.assertIsNotNone(dipole)
+        self.assertEqual(dipole.shape, (3,))
+
+    def test_get_dipole_moment_raises_when_absent(self):
+        from ase.calculators.calculator import PropertyNotImplementedError
+        calc = gxTB()
+        calc.results = {}
+        with self.assertRaises(PropertyNotImplementedError):
+            calc.get_dipole_moment()
 
     def test_capture_stdout_false_by_default(self):
         atoms = _make_atoms()

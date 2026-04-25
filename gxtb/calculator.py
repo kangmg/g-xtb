@@ -56,7 +56,11 @@ class gxTB(Calculator):
         to the 'parameters/' directory bundled with this package.
     """
 
-    implemented_properties = ['energy', 'forces', 'charges', 'dipole']
+    # 'dipole' is intentionally excluded: it is parsed from xtb stdout on a
+    # best-effort basis and cannot be guaranteed.  Declaring it here would
+    # cause ASE to raise PropertyNotImplementedError whenever the parser
+    # finds nothing.  Use get_dipole_moment() to access it when available.
+    implemented_properties = ['energy', 'forces', 'charges']
 
     def __init__(self, keep_files=False, command='xtb', charge=None, uhf=None,
                  spin=None, verbose=False, capture_stdout=False, workdir=None,
@@ -144,6 +148,43 @@ class gxTB(Calculator):
             self._cleanup(work_dir, is_temp)
 
         return hessian
+
+    def get_dipole_moment(self, atoms=None):
+        """
+        Return the molecular dipole moment vector parsed from xtb stdout.
+
+        Dipole is populated automatically during any energy or force
+        calculation. Call get_potential_energy() (or get_forces()) first,
+        then call this method with no arguments to retrieve the cached value.
+
+        If atoms is provided, a fresh single-point calculation is run first.
+
+        Parameters
+        ----------
+        atoms : ase.Atoms, optional
+
+        Returns
+        -------
+        np.ndarray, shape (3,), units e·Å
+
+        Raises
+        ------
+        PropertyNotImplementedError
+            If xtb did not print a dipole moment in its output.
+        """
+        from ase.calculators.calculator import PropertyNotImplementedError
+
+        if atoms is not None:
+            self.calculate(atoms, ['energy'])
+
+        if 'dipole' not in self.results:
+            raise PropertyNotImplementedError(
+                "Dipole moment was not found in the xtb output. "
+                "Ensure a calculation has been run first "
+                "(e.g. atoms.get_potential_energy()), and that "
+                "xtb --gxtb prints 'molecular dipole' for your system."
+            )
+        return self.results['dipole']
 
     # ------------------------------------------------------------------
     # Working directory management
