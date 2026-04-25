@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import warnings
 import numpy as np
 from pathlib import Path
 from ase.calculators.calculator import Calculator, all_changes
@@ -66,6 +67,7 @@ class gxTB(Calculator):
         self.capture_stdout = capture_stdout
         self.workdir = Path(workdir) if workdir is not None else None
         self.stdout = None
+        self._raw_stdout = ''  # always initialized; set by _run_command
 
         if gxtbhome is not None:
             self.gxtbhome = Path(gxtbhome)
@@ -77,14 +79,16 @@ class gxTB(Calculator):
     # Core ASE interface
     # ------------------------------------------------------------------
 
-    def calculate(self, atoms=None, properties=['energy'], system_changes=all_changes):
+    def calculate(self, atoms=None, properties=None, system_changes=all_changes):
         """Run g-xTB and populate self.results."""
+        if properties is None:
+            properties = ['energy']
         if atoms is None:
             atoms = self.atoms
         super().calculate(atoms, properties, system_changes)
 
-        charge = atoms.info.get('charge', self.charge)
-        uhf = atoms.info.get('uhf', self.uhf)
+        charge = self._resolve_charge(atoms)
+        uhf = self._resolve_uhf(atoms)
         grad = 'forces' in properties
 
         work_dir, is_temp = self._make_work_dir()
@@ -123,8 +127,8 @@ class gxTB(Calculator):
         if atoms is None:
             raise ValueError("No atoms object provided")
 
-        charge = atoms.info.get('charge', self.charge)
-        uhf = atoms.info.get('uhf', self.uhf)
+        charge = self._resolve_charge(atoms)
+        uhf = self._resolve_uhf(atoms)
 
         work_dir, is_temp = self._make_work_dir()
         try:
@@ -192,35 +196,67 @@ class gxTB(Calculator):
             self._remove_known_files(self.workdir)
 
     # ------------------------------------------------------------------
+    # Parameter resolution helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_charge(self, atoms):
+        charge = atoms.info.get('charge', self.charge)
+        if charge is None:
+            return None
+        if int(charge) != charge:
+            raise ValueError(
+                f"Molecular charge must be an integer, got {charge!r}"
+            )
+        return int(charge)
+
+    def _resolve_uhf(self, atoms):
+        uhf = atoms.info.get('uhf', self.uhf)
+        if uhf is None:
+            return None
+        if int(uhf) != uhf:
+            raise ValueError(
+                f"uhf (unpaired electrons) must be an integer, got {uhf!r}"
+            )
+        return int(uhf)
+
+    # ------------------------------------------------------------------
     # Command building and execution
     # ------------------------------------------------------------------
 
     def _build_command(self, coord_file, charge, uhf, extra_flags=None):
         cmd = [self.command, coord_file, '--gxtb']
         if charge is not None:
-            cmd += ['--chrg', str(int(charge))]
+            cmd += ['--chrg', str(charge)]
         if uhf is not None:
-            cmd += ['--uhf', str(int(uhf))]
+            cmd += ['--uhf', str(uhf)]
         if extra_flags:
             cmd += extra_flags
         return cmd
 
     def _run_command(self, cmd, work_dir):
         env = os.environ.copy()
-        if self.gxtbhome and self.gxtbhome.exists():
+        if self.gxtbhome.exists():
             env['GXTBHOME'] = str(self.gxtbhome)
+        else:
+            warnings.warn(
+                f"g-xTB parameter directory not found: {self.gxtbhome}. "
+                "xtb will use its default parameter location, which may "
+                "not have the g-xTB parameters. Run gxtb_install() to "
+                "download the parameter files.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
 
         result = subprocess.run(
             cmd, capture_output=True, text=True,
             cwd=work_dir, env=env,
         )
-        raw_stdout = result.stdout
+        self._raw_stdout = result.stdout
 
         if self.verbose:
-            print(raw_stdout)
-        self._raw_stdout = raw_stdout
+            print(result.stdout)
         if self.capture_stdout:
-            self.stdout = raw_stdout
+            self.stdout = result.stdout
 
         if result.returncode != 0:
             raise RuntimeError(
@@ -234,10 +270,19 @@ class gxTB(Calculator):
 
     def _parse_results(self, atoms, work_dir, parse_forces=False):
         self.results['energy'] = self._parse_energy(work_dir)
-        if parse_forces and (work_dir / 'gradient').exists():
+
+        if parse_forces:
+            grad_file = work_dir / 'gradient'
+            if not grad_file.exists():
+                raise RuntimeError(
+                    "xtb ran successfully but did not produce a 'gradient' "
+                    "file. This is unexpected; check the xtb output above."
+                )
             self.results['forces'] = self._parse_forces(atoms, work_dir)
+
         if (work_dir / 'charges').exists():
             self.results['charges'] = self._parse_charges(atoms, work_dir)
+
         dipole = self._parse_dipole_from_stdout(self._raw_stdout)
         if dipole is not None:
             self.results['dipole'] = dipole
@@ -414,7 +459,13 @@ class gxTB(Calculator):
                 if stripped.startswith('$'):
                     break
                 if stripped:
-                    values.extend(float(v) for v in stripped.split())
+                    try:
+                        values.extend(float(v) for v in stripped.split())
+                    except ValueError as e:
+                        raise RuntimeError(
+                            f"Hessian: could not parse numeric value in line "
+                            f"{stripped!r}: {e}"
+                        ) from e
 
         n = len(atoms)
         expected = (3 * n) ** 2

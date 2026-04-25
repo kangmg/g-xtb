@@ -30,6 +30,8 @@ _BINARY_MAP = {
 _PARAM_FILES = ['.gxtb', '.eeq', '.basisq']
 _PARAM_URL_BASE = 'https://raw.githubusercontent.com/grimme-lab/g-xtb/main/parameters/'
 
+_LFS_POINTER_MAGIC = b'version https://git-lfs.github.com/spec/v1'
+
 
 def _platform_key():
     return platform.system(), platform.machine()
@@ -41,6 +43,23 @@ def _sha256_of_file(path):
         for chunk in iter(lambda: f.read(65536), b''):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _check_lfs_pointer(path):
+    """Raise if the downloaded file is a Git LFS pointer instead of the real binary."""
+    if path.stat().st_size > 1024:
+        return
+    try:
+        with open(path, 'rb') as f:
+            header = f.read(len(_LFS_POINTER_MAGIC))
+        if header == _LFS_POINTER_MAGIC:
+            raise RuntimeError(
+                f"Downloaded file is a Git LFS pointer, not the actual binary.\n"
+                f"Try downloading directly from:\n"
+                f"  https://media.githubusercontent.com/media/grimme-lab/g-xtb/main/binaries/{path.name}"
+            )
+    except OSError:
+        pass
 
 
 def gxtb_install(install_dir=None, verbose=True, overwrite=False):
@@ -71,7 +90,9 @@ def gxtb_install(install_dir=None, verbose=True, overwrite=False):
         )
 
     archive_name, exe_name = _BINARY_MAP[key]
-    install_dir = Path(install_dir) if install_dir else Path.home() / 'bin'
+    install_dir = (
+        Path(install_dir).expanduser() if install_dir else Path.home() / 'bin'
+    )
     install_dir.mkdir(parents=True, exist_ok=True)
     exe_path = install_dir / exe_name
 
@@ -88,6 +109,8 @@ def gxtb_install(install_dir=None, verbose=True, overwrite=False):
             print(f"Downloading {archive_url} ...")
         try:
             urllib.request.urlretrieve(archive_url, tmp_archive)
+
+            _check_lfs_pointer(tmp_archive)
 
             # Verify SHA256 checksum when available
             try:
