@@ -6,6 +6,7 @@ and charge/UHF validation.  No xtb binary is required — subprocess calls
 are mocked where needed.
 """
 import shutil
+import subprocess
 import tempfile
 import textwrap
 import unittest
@@ -170,6 +171,40 @@ class TestBuildCommand(unittest.TestCase):
         c = gxTB(command='/opt/xtb/bin/xtb')
         cmd = c._build_command('mol.xyz', None, None, [])
         self.assertEqual(cmd[0], '/opt/xtb/bin/xtb')
+
+    def test_nprocs_adds_parallel_flag(self):
+        c = gxTB(nprocs=4)
+        cmd = c._build_command('mol.xyz', None, None, [])
+        self.assertIn('--parallel', cmd)
+        self.assertIn('4', cmd)
+
+    def test_nprocs_1_no_parallel_flag(self):
+        c = gxTB(nprocs=1)
+        cmd = c._build_command('mol.xyz', None, None, [])
+        self.assertNotIn('--parallel', cmd)
+
+    def test_nprocs_sets_omp_env(self):
+        import os
+        c = gxTB(nprocs=8)
+        recorded_env = {}
+
+        real_run = subprocess.run
+
+        def fake_subprocess(cmd, **kwargs):
+            recorded_env.update(kwargs.get('env', {}))
+            m = MagicMock()
+            m.returncode = 0
+            m.stdout = '          TOTAL ENERGY              -10.0 Eh\n'
+            m.stderr = ''
+            return m
+
+        with patch('gxtb.calculator.subprocess.run', side_effect=fake_subprocess):
+            try:
+                c._run_command(['xtb', 'mol.xyz', '--gxtb'], Path('/tmp'))
+            except Exception:
+                pass
+
+        self.assertEqual(recorded_env.get('OMP_NUM_THREADS'), '8')
 
 
 # ---------------------------------------------------------------------------

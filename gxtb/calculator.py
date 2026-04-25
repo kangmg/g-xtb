@@ -54,6 +54,11 @@ class gxTB(Calculator):
         Path to directory containing g-xTB parameter files (.gxtb, .eeq,
         .basisq). Sets the GXTBHOME environment variable for xtb. Defaults
         to the 'parameters/' directory bundled with this package.
+    nprocs : int, default=1
+        Number of OpenMP threads for xtb. Passed as ``--parallel N`` and
+        also exported as ``OMP_NUM_THREADS=N`` in the subprocess environment.
+        For large systems, consider also setting ``OMP_STACKSIZE`` in your
+        shell (e.g. ``export OMP_STACKSIZE=4G``) to avoid stack overflows.
     """
 
     # 'dipole' is intentionally excluded: it is parsed from xtb stdout on a
@@ -64,12 +69,13 @@ class gxTB(Calculator):
 
     def __init__(self, keep_files=False, command='xtb', charge=None, uhf=None,
                  spin=None, verbose=False, capture_stdout=False, workdir=None,
-                 gxtbhome=None, **kwargs):
+                 gxtbhome=None, nprocs=1, **kwargs):
         super().__init__(**kwargs)
         self.keep_files = keep_files
         self.command = command
         self.charge = charge
         self.uhf = uhf if uhf is not None else spin
+        self.nprocs = nprocs
         self.verbose = verbose
         self.capture_stdout = capture_stdout
         self.workdir = Path(workdir) if workdir is not None else None
@@ -275,12 +281,16 @@ class gxTB(Calculator):
             cmd += ['--chrg', str(charge)]
         if uhf is not None:
             cmd += ['--uhf', str(uhf)]
+        if self.nprocs > 1:
+            cmd += ['--parallel', str(self.nprocs)]
         if extra_flags:
             cmd += extra_flags
         return cmd
 
     def _run_command(self, cmd, work_dir):
         env = os.environ.copy()
+        if self.nprocs > 1:
+            env['OMP_NUM_THREADS'] = str(self.nprocs)
         if self.gxtbhome.exists():
             env['GXTBHOME'] = str(self.gxtbhome)
         else:
