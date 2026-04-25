@@ -177,46 +177,6 @@ atoms.calc = gxTB(gxtbhome='/path/to/gxtb/parameters')
 
 ---
 
-## Integration with ASE workflows
-
-### Geometry optimisation
-
-```python
-from ase.optimize import LBFGS
-
-atoms.calc = gxTB()
-opt = LBFGS(atoms)
-opt.run(fmax=0.01)          # eV/Å
-```
-
-### Molecular dynamics
-
-```python
-from ase.md.langevin import Langevin
-from ase.units import fs, kB
-
-atoms.calc = gxTB()
-md = Langevin(atoms, timestep=1.0*fs, temperature_K=300, friction=0.01)
-md.run(steps=1000)
-```
-
-### Transition state search (NEB)
-
-```python
-from ase.neb import NEB
-from ase.optimize import BFGS
-
-images = [atoms.copy() for _ in range(5)]
-for img in images:
-    img.calc = gxTB()
-
-neb = NEB(images)
-opt = BFGS(neb)
-opt.run(fmax=0.05)
-```
-
----
-
 ## Running tests
 
 ```bash
@@ -232,5 +192,4 @@ No xtb binary is required to run the tests.
 ## Acknowledgements
 
 - [grimme-lab/g-xtb](https://github.com/grimme-lab/g-xtb) — original g-xTB method and binary
-- [tblite](https://github.com/tblite/tblite) — future home of g-xTB
 - [ASE](https://wiki.fysik.dtu.dk/ase/) — Atomic Simulation Environment
