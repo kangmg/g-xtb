@@ -662,14 +662,8 @@ class TestGetHessianMocked(unittest.TestCase):
         size = 3 * n
 
         def fake_run(cmd, work_dir):
+            # --hess does NOT write a gradient file (matches real xtb behaviour)
             (work_dir / 'energy').write_text('$energy\n 1  -10.0\n$end\n')
-            grad_lines = '$grad  cartesian gradients\n  cycle=1  SCF energy=-10.0\n'
-            for i in range(n):
-                grad_lines += f'  0.0  0.0  {float(i)}  h\n'
-            for i in range(n):
-                grad_lines += '  1.0D-05  2.0D-05  3.0D-05\n'
-            grad_lines += '$end\n'
-            (work_dir / 'gradient').write_text(grad_lines)
             (work_dir / 'charges').write_text('\n'.join(['0.0'] * n) + '\n')
             hess_vals = [str(float(i)) for i in range(size * size)]
             lines = []

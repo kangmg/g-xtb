@@ -142,7 +142,8 @@ class gxTB(Calculator):
             write(str(work_dir / 'mol.xyz'), atoms, format='xyz')
             cmd = self._build_command('mol.xyz', charge, uhf, ['--hess'])
             self._run_command(cmd, work_dir)
-            self._parse_results(atoms, work_dir, parse_forces=True)
+            # --hess does not write a gradient file; parse energy/charges/dipole only
+            self._parse_results(atoms, work_dir, parse_forces=False)
             hessian = self._parse_hessian(atoms, work_dir)
         finally:
             self._cleanup(work_dir, is_temp)
@@ -220,7 +221,7 @@ class gxTB(Calculator):
             'xtbrestart', 'wbo', 'bond_orders',
             'vibspectrum', 'g98.out', 'molden.input',
             'xtbopt.xyz', 'xtbopt.log', 'xtbhess.xyz', '.xtboptok',
-            'gfnff_adjacency', 'gfnff_topo',
+            'xtbtopo.mol', 'gfnff_adjacency', 'gfnff_topo',
             '.CHRG', '.UHF', 'coord', 'gxtbrestart',
         ]
         for fname in known:
