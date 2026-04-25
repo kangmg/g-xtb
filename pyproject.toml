@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gxtb"
-version = "0.0.1"
+version = "0.1.0"
 maintainers = [
   { name="Mingi KANG", email="kangmg@korea.ac.kr" },
 ]
@@ -25,3 +25,6 @@ dependencies = [
 
 [tool.setuptools]
 packages = ["gxtb"]
+
+[tool.setuptools.package-data]
+gxtb = ["parameters/.*"]
