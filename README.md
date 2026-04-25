@@ -33,6 +33,8 @@ If the xtb binary is already on your PATH, no install step is needed.
 
 ## Quick start
 
+More examples: <a href="https://colab.research.google.com/github/kangmg/g-xtb/blob/main/example/gxTB_tutorial.ipynb" target="_parent"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
+
 ```python
 from ase.build import molecule
 from gxtb import gxTB

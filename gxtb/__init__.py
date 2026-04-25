@@ -8,6 +8,7 @@ import urllib.error
 import zipfile
 from pathlib import Path
 from .calculator import gxTB
+from .benchmark import benchmark_parallel
 
 __version__ = '0.1.0'
 

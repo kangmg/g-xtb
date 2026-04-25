@@ -54,18 +54,28 @@ class gxTB(Calculator):
         Path to directory containing g-xTB parameter files (.gxtb, .eeq,
         .basisq). Sets the GXTBHOME environment variable for xtb. Defaults
         to the 'parameters/' directory bundled with this package.
+    nprocs : int, default=1
+        Number of OpenMP threads for xtb. Passed as ``--parallel N`` and
+        also exported as ``OMP_NUM_THREADS=N`` in the subprocess environment.
+        For large systems, consider also setting ``OMP_STACKSIZE`` in your
+        shell (e.g. ``export OMP_STACKSIZE=4G``) to avoid stack overflows.
     """
 
-    implemented_properties = ['energy', 'forces', 'charges', 'dipole']
+    # 'dipole' is intentionally excluded: it is parsed from xtb stdout on a
+    # best-effort basis and cannot be guaranteed.  Declaring it here would
+    # cause ASE to raise PropertyNotImplementedError whenever the parser
+    # finds nothing.  Use get_dipole_moment() to access it when available.
+    implemented_properties = ['energy', 'forces', 'charges']
 
     def __init__(self, keep_files=False, command='xtb', charge=None, uhf=None,
                  spin=None, verbose=False, capture_stdout=False, workdir=None,
-                 gxtbhome=None, **kwargs):
+                 gxtbhome=None, nprocs=1, **kwargs):
         super().__init__(**kwargs)
         self.keep_files = keep_files
         self.command = command
         self.charge = charge
         self.uhf = uhf if uhf is not None else spin
+        self.nprocs = nprocs
         self.verbose = verbose
         self.capture_stdout = capture_stdout
         self.workdir = Path(workdir) if workdir is not None else None
@@ -138,12 +148,50 @@ class gxTB(Calculator):
             write(str(work_dir / 'mol.xyz'), atoms, format='xyz')
             cmd = self._build_command('mol.xyz', charge, uhf, ['--hess'])
             self._run_command(cmd, work_dir)
-            self._parse_results(atoms, work_dir, parse_forces=True)
+            # --hess does not write a gradient file; parse energy/charges/dipole only
+            self._parse_results(atoms, work_dir, parse_forces=False)
             hessian = self._parse_hessian(atoms, work_dir)
         finally:
             self._cleanup(work_dir, is_temp)
 
         return hessian
+
+    def get_dipole_moment(self, atoms=None):
+        """
+        Return the molecular dipole moment vector parsed from xtb stdout.
+
+        Dipole is populated automatically during any energy or force
+        calculation. Call get_potential_energy() (or get_forces()) first,
+        then call this method with no arguments to retrieve the cached value.
+
+        If atoms is provided, a fresh single-point calculation is run first.
+
+        Parameters
+        ----------
+        atoms : ase.Atoms, optional
+
+        Returns
+        -------
+        np.ndarray, shape (3,), units e·Å
+
+        Raises
+        ------
+        PropertyNotImplementedError
+            If xtb did not print a dipole moment in its output.
+        """
+        from ase.calculators.calculator import PropertyNotImplementedError
+
+        if atoms is not None:
+            self.calculate(atoms, ['energy'])
+
+        if 'dipole' not in self.results:
+            raise PropertyNotImplementedError(
+                "Dipole moment was not found in the xtb output. "
+                "Ensure a calculation has been run first "
+                "(e.g. atoms.get_potential_energy()), and that "
+                "xtb --gxtb prints 'molecular dipole' for your system."
+            )
+        return self.results['dipole']
 
     # ------------------------------------------------------------------
     # Working directory management
@@ -179,7 +227,7 @@ class gxTB(Calculator):
             'xtbrestart', 'wbo', 'bond_orders',
             'vibspectrum', 'g98.out', 'molden.input',
             'xtbopt.xyz', 'xtbopt.log', 'xtbhess.xyz', '.xtboptok',
-            'gfnff_adjacency', 'gfnff_topo',
+            'xtbtopo.mol', 'gfnff_adjacency', 'gfnff_topo',
             '.CHRG', '.UHF', 'coord', 'gxtbrestart',
         ]
         for fname in known:
@@ -233,12 +281,16 @@ class gxTB(Calculator):
             cmd += ['--chrg', str(charge)]
         if uhf is not None:
             cmd += ['--uhf', str(uhf)]
+        if self.nprocs > 1:
+            cmd += ['--parallel', str(self.nprocs)]
         if extra_flags:
             cmd += extra_flags
         return cmd
 
     def _run_command(self, cmd, work_dir):
         env = os.environ.copy()
+        if self.nprocs > 1:
+            env['OMP_NUM_THREADS'] = str(self.nprocs)
         if self.gxtbhome.exists():
             env['GXTBHOME'] = str(self.gxtbhome)
         else:

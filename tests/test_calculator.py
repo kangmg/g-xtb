@@ -6,6 +6,7 @@ and charge/UHF validation.  No xtb binary is required — subprocess calls
 are mocked where needed.
 """
 import shutil
+import subprocess
 import tempfile
 import textwrap
 import unittest
@@ -69,7 +70,8 @@ class TestInit(unittest.TestCase):
         self.assertIn('energy', gxTB.implemented_properties)
         self.assertIn('forces', gxTB.implemented_properties)
         self.assertIn('charges', gxTB.implemented_properties)
-        self.assertIn('dipole', gxTB.implemented_properties)
+        # dipole is excluded: parsed from stdout on best-effort basis only
+        self.assertNotIn('dipole', gxTB.implemented_properties)
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +171,40 @@ class TestBuildCommand(unittest.TestCase):
         c = gxTB(command='/opt/xtb/bin/xtb')
         cmd = c._build_command('mol.xyz', None, None, [])
         self.assertEqual(cmd[0], '/opt/xtb/bin/xtb')
+
+    def test_nprocs_adds_parallel_flag(self):
+        c = gxTB(nprocs=4)
+        cmd = c._build_command('mol.xyz', None, None, [])
+        self.assertIn('--parallel', cmd)
+        self.assertIn('4', cmd)
+
+    def test_nprocs_1_no_parallel_flag(self):
+        c = gxTB(nprocs=1)
+        cmd = c._build_command('mol.xyz', None, None, [])
+        self.assertNotIn('--parallel', cmd)
+
+    def test_nprocs_sets_omp_env(self):
+        import os
+        c = gxTB(nprocs=8)
+        recorded_env = {}
+
+        real_run = subprocess.run
+
+        def fake_subprocess(cmd, **kwargs):
+            recorded_env.update(kwargs.get('env', {}))
+            m = MagicMock()
+            m.returncode = 0
+            m.stdout = '          TOTAL ENERGY              -10.0 Eh\n'
+            m.stderr = ''
+            return m
+
+        with patch('gxtb.calculator.subprocess.run', side_effect=fake_subprocess):
+            try:
+                c._run_command(['xtb', 'mol.xyz', '--gxtb'], Path('/tmp'))
+            except Exception:
+                pass
+
+        self.assertEqual(recorded_env.get('OMP_NUM_THREADS'), '8')
 
 
 # ---------------------------------------------------------------------------
@@ -564,7 +600,7 @@ class TestCalculateMocked(unittest.TestCase):
         self.assertEqual(len(charges), 3)
         self.assertAlmostEqual(charges.sum(), 0.0, places=5)
 
-    def test_dipole_populated(self):
+    def test_dipole_populated_in_results(self):
         atoms = _make_atoms()
         calc = gxTB()
         self._patch_run(calc, grad=False)
@@ -573,6 +609,23 @@ class TestCalculateMocked(unittest.TestCase):
         dipole = calc.results.get('dipole')
         self.assertIsNotNone(dipole)
         self.assertEqual(len(dipole), 3)
+
+    def test_get_dipole_moment_returns_cached(self):
+        atoms = _make_atoms()
+        calc = gxTB()
+        self._patch_run(calc, grad=False)
+        atoms.calc = calc
+        atoms.get_potential_energy()
+        dipole = calc.get_dipole_moment()
+        self.assertIsNotNone(dipole)
+        self.assertEqual(dipole.shape, (3,))
+
+    def test_get_dipole_moment_raises_when_absent(self):
+        from ase.calculators.calculator import PropertyNotImplementedError
+        calc = gxTB()
+        calc.results = {}
+        with self.assertRaises(PropertyNotImplementedError):
+            calc.get_dipole_moment()
 
     def test_capture_stdout_false_by_default(self):
         atoms = _make_atoms()
@@ -644,14 +697,8 @@ class TestGetHessianMocked(unittest.TestCase):
         size = 3 * n
 
         def fake_run(cmd, work_dir):
+            # --hess does NOT write a gradient file (matches real xtb behaviour)
             (work_dir / 'energy').write_text('$energy\n 1  -10.0\n$end\n')
-            grad_lines = '$grad  cartesian gradients\n  cycle=1  SCF energy=-10.0\n'
-            for i in range(n):
-                grad_lines += f'  0.0  0.0  {float(i)}  h\n'
-            for i in range(n):
-                grad_lines += '  1.0D-05  2.0D-05  3.0D-05\n'
-            grad_lines += '$end\n'
-            (work_dir / 'gradient').write_text(grad_lines)
             (work_dir / 'charges').write_text('\n'.join(['0.0'] * n) + '\n')
             hess_vals = [str(float(i)) for i in range(size * size)]
             lines = []
@@ -728,6 +775,117 @@ class TestGxtbhomeWarning(unittest.TestCase):
                 warnings.warn('g-xTB parameter directory not found', RuntimeWarning)
 
         self.assertTrue(any(issubclass(x.category, RuntimeWarning) for x in w))
+
+
+# ---------------------------------------------------------------------------
+# benchmark_parallel
+# ---------------------------------------------------------------------------
+
+class TestBenchmarkParallel(unittest.TestCase):
+    """Tests for benchmark_parallel() — gxTB calls are fully mocked."""
+
+    def setUp(self):
+        self.atoms = _make_atoms()
+
+    def _patch_time_single(self, times):
+        """Return a context manager that replaces _time_single with a queue of values."""
+        import itertools
+        from unittest.mock import patch as _patch
+        counter = itertools.cycle(times)
+        return _patch('gxtb.benchmark._time_single', side_effect=lambda *a, **kw: next(counter))
+
+    def test_returns_dict_keyed_by_nprocs(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+        from gxtb.benchmark import benchmark_parallel
+        with self._patch_time_single([2.0, 1.0]):
+            result = benchmark_parallel(self.atoms, [1, 2])
+        self.assertIn(1, result)
+        self.assertIn(2, result)
+
+    def test_empty_nprocs_list_raises(self):
+        from gxtb.benchmark import benchmark_parallel
+        with self.assertRaises(ValueError):
+            benchmark_parallel(self.atoms, [])
+
+    def test_repeat_zero_raises(self):
+        from gxtb.benchmark import benchmark_parallel
+        with self.assertRaises(ValueError):
+            benchmark_parallel(self.atoms, [1], repeat=0)
+
+    def test_average_over_repeat(self):
+        from gxtb.benchmark import benchmark_parallel
+        with self._patch_time_single([4.0, 2.0]):
+            result = benchmark_parallel(self.atoms, [1], repeat=2)
+        self.assertAlmostEqual(result[1], 3.0)
+
+    def test_single_nproc(self):
+        from gxtb.benchmark import benchmark_parallel
+        with self._patch_time_single([5.0]):
+            result = benchmark_parallel(self.atoms, [4])
+        self.assertAlmostEqual(result[4], 5.0)
+
+    def test_warmup_triggers_extra_call(self):
+        from gxtb.benchmark import benchmark_parallel
+        call_log = []
+
+        def recording_time_single(atoms, nprocs, kw):
+            call_log.append(nprocs)
+            return 1.0
+
+        with patch('gxtb.benchmark._time_single', side_effect=recording_time_single):
+            benchmark_parallel(self.atoms, [1, 2], repeat=1, warmup=True)
+
+        # warmup call + 2 timed calls = 3 total
+        self.assertEqual(len(call_log), 3)
+        # first call is the warmup with nprocs_list[0]
+        self.assertEqual(call_log[0], 1)
+
+    def test_calc_kwargs_nprocs_stripped(self):
+        from gxtb.benchmark import benchmark_parallel
+        received_kw = []
+
+        def recording_time_single(atoms, nprocs, kw):
+            received_kw.append(dict(kw))
+            return 1.0
+
+        with patch('gxtb.benchmark._time_single', side_effect=recording_time_single):
+            benchmark_parallel(self.atoms, [1], calc_kwargs={'nprocs': 99, 'charge': -1})
+
+        self.assertNotIn('nprocs', received_kw[0])
+        self.assertEqual(received_kw[0].get('charge'), -1)
+
+    def test_plot_warns_when_matplotlib_missing(self):
+        import warnings
+        import sys
+        from gxtb.benchmark import benchmark_parallel
+
+        with self._patch_time_single([1.0]):
+            with patch.dict(sys.modules, {'matplotlib': None, 'matplotlib.pyplot': None}):
+                with warnings.catch_warnings(record=True) as w:
+                    warnings.simplefilter('always')
+                    benchmark_parallel(self.atoms, [1], plot=True)
+        # Either no warning (matplotlib already installed and used) or RuntimeWarning
+        runtime_warns = [x for x in w if issubclass(x.category, RuntimeWarning)]
+        # This test simply asserts it doesn't raise an exception
+        # (matplotlib may or may not be installed in the test environment)
+
+    def test_print_table_outputs_speedup(self, capsys=None):
+        """_print_table should produce speedup column in stdout."""
+        from gxtb.benchmark import _print_table
+        import io
+        from contextlib import redirect_stdout
+        timings = {1: 4.0, 2: 2.0, 4: 1.5}
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            _print_table(self.atoms, timings, repeat=3)
+        output = buf.getvalue()
+        self.assertIn('speedup', output.lower())
+        self.assertIn('efficiency', output.lower())
+        # nprocs values appear in table
+        self.assertIn('1', output)
+        self.assertIn('2', output)
+        self.assertIn('4', output)
 
 
 if __name__ == '__main__':
