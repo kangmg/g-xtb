@@ -36,7 +36,10 @@ class gxTB(Calculator):
     charge : int, optional
         Molecular charge. Overridden by atoms.info['charge'].
     uhf : int, optional
-        Number of unpaired electrons. Overridden by atoms.info['uhf'].
+        Number of unpaired electrons. Overridden by atoms.info['uhf'] or
+        atoms.info['spin'] (spin is checked when uhf is absent).
+    spin : int, optional
+        Alias for uhf. Ignored if uhf is also provided.
     verbose : bool, default=False
         Print xtb stdout and working directory path during calculation.
     capture_stdout : bool, default=False
@@ -56,13 +59,13 @@ class gxTB(Calculator):
     implemented_properties = ['energy', 'forces', 'charges', 'dipole']
 
     def __init__(self, keep_files=False, command='xtb', charge=None, uhf=None,
-                 verbose=False, capture_stdout=False, workdir=None,
+                 spin=None, verbose=False, capture_stdout=False, workdir=None,
                  gxtbhome=None, **kwargs):
         super().__init__(**kwargs)
         self.keep_files = keep_files
         self.command = command
         self.charge = charge
-        self.uhf = uhf
+        self.uhf = uhf if uhf is not None else spin
         self.verbose = verbose
         self.capture_stdout = capture_stdout
         self.workdir = Path(workdir) if workdir is not None else None
@@ -210,12 +213,13 @@ class gxTB(Calculator):
         return int(charge)
 
     def _resolve_uhf(self, atoms):
-        uhf = atoms.info.get('uhf', self.uhf)
+        # Priority: atoms.info['uhf'] > atoms.info['spin'] > self.uhf
+        uhf = atoms.info.get('uhf', atoms.info.get('spin', self.uhf))
         if uhf is None:
             return None
         if int(uhf) != uhf:
             raise ValueError(
-                f"uhf (unpaired electrons) must be an integer, got {uhf!r}"
+                f"uhf/spin (unpaired electrons) must be an integer, got {uhf!r}"
             )
         return int(uhf)
 
