@@ -53,15 +53,6 @@ class TestInit(unittest.TestCase):
         self.assertIsNone(c.stdout)
         self.assertEqual(c._raw_stdout, '')
 
-    def test_gxtbhome_default_inside_package(self):
-        c = gxTB()
-        expected = Path(__file__).parent.parent / 'gxtb' / 'parameters'
-        self.assertEqual(c.gxtbhome, expected)
-
-    def test_gxtbhome_custom(self):
-        c = gxTB(gxtbhome='/tmp/myparams')
-        self.assertEqual(c.gxtbhome, Path('/tmp/myparams'))
-
     def test_workdir_stored_as_path(self):
         c = gxTB(workdir='/tmp/mydir')
         self.assertEqual(c.workdir, Path('/tmp/mydir'))
@@ -785,46 +776,6 @@ class TestGetHessianMocked(unittest.TestCase):
         calc = gxTB()
         with self.assertRaises(ValueError):
             calc.get_hessian(None)
-
-
-# ---------------------------------------------------------------------------
-# GXTBHOME warning
-# ---------------------------------------------------------------------------
-
-class TestGxtbhomeWarning(unittest.TestCase):
-
-    def test_missing_gxtbhome_emits_warning(self):
-        import warnings
-        calc = gxTB(gxtbhome='/nonexistent/path/to/params')
-        captured = []
-
-        real_run = calc._run_command
-
-        def fake_run(cmd, work_dir):
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter('always')
-                if not calc.gxtbhome.exists():
-                    warnings.warn('missing', RuntimeWarning)
-            captured.extend(w)
-
-        calc._run_command = fake_run
-
-        atoms = _make_atoms()
-        atoms.calc = calc
-
-        def fake_calc(atoms, properties, system_changes):
-            from ase.calculators.calculator import all_changes
-            calc._raw_stdout = '          TOTAL ENERGY              -10.0 Eh\n'
-            calc.results['energy'] = -10.0 * Hartree
-
-        calc.calculate = fake_calc
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter('always')
-            if not calc.gxtbhome.exists():
-                warnings.warn('g-xTB parameter directory not found', RuntimeWarning)
-
-        self.assertTrue(any(issubclass(x.category, RuntimeWarning) for x in w))
 
 
 # ---------------------------------------------------------------------------

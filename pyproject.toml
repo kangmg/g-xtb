@@ -29,5 +29,3 @@ gxtb-install = "gxtb.cli:_install"
 [tool.setuptools]
 packages = ["gxtb"]
 
-[tool.setuptools.package-data]
-gxtb = ["parameters/.*"]

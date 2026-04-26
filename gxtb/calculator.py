@@ -10,7 +10,6 @@ import os
 import shutil
 import subprocess
 import tempfile
-import warnings
 import numpy as np
 from pathlib import Path
 from ase.calculators.calculator import Calculator, all_changes
@@ -59,6 +58,11 @@ class gxTB(Calculator):
         also exported as ``OMP_NUM_THREADS=N`` in the subprocess environment.
         For large systems, consider also setting ``OMP_STACKSIZE`` in your
         shell (e.g. ``export OMP_STACKSIZE=4G``) to avoid stack overflows.
+
+    Notes
+    -----
+    Parameter files (.gxtb, .eeq, .basisq) are compiled into the xtb binary
+    as of v2.0.0. No external parameter directory is required.
     """
 
     # 'dipole' is intentionally excluded: it is parsed from xtb stdout on a
@@ -69,7 +73,7 @@ class gxTB(Calculator):
 
     def __init__(self, keep_files=False, command='xtb', charge=None, uhf=None,
                  spin=None, verbose=False, capture_stdout=False, workdir=None,
-                 gxtbhome=None, nprocs=1, **kwargs):
+                 nprocs=1, **kwargs):
         super().__init__(**kwargs)
         self.keep_files = keep_files
         self.command = command
@@ -81,12 +85,6 @@ class gxTB(Calculator):
         self.workdir = Path(workdir) if workdir is not None else None
         self.stdout = None
         self._raw_stdout = ''  # always initialized; set by _run_command
-
-        if gxtbhome is not None:
-            self.gxtbhome = Path(gxtbhome)
-        else:
-            # parameters/ bundled inside the package directory
-            self.gxtbhome = Path(__file__).parent / 'parameters'
 
     # ------------------------------------------------------------------
     # Core ASE interface
@@ -296,17 +294,6 @@ class gxTB(Calculator):
     def _run_command(self, cmd, work_dir):
         env = os.environ.copy()
         env['OMP_NUM_THREADS'] = str(self.nprocs)
-        if self.gxtbhome.exists():
-            env['GXTBHOME'] = str(self.gxtbhome)
-        else:
-            warnings.warn(
-                f"g-xTB parameter directory not found: {self.gxtbhome}. "
-                "xtb will use its default parameter location, which may "
-                "not have the g-xTB parameters. Run gxtb_install() to "
-                "download the parameter files.",
-                RuntimeWarning,
-                stacklevel=3,
-            )
 
         result = subprocess.run(
             cmd, capture_output=True, text=True,
