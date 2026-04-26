@@ -951,8 +951,13 @@ class TestBenchmarkParallel(unittest.TestCase):
         self.assertAlmostEqual(fitted[2], 7.93913718723037, places=10)
         self.assertAlmostEqual(fitted[3], 16.82617773943054, places=10)
 
+    def test_linear_fit_mismatched_lengths_raise(self):
+        from gxtb.benchmark import _linear_fit
+        with self.assertRaises(ValueError):
+            _linear_fit([1, 2], [1.0])
+
     def test_plot_uses_actual_nprocs_and_linear_fit_only(self):
-        from gxtb.benchmark import _plot
+        from gxtb.benchmark import _plot, _linear_fit
         import sys
         import types
 
@@ -976,6 +981,8 @@ class TestBenchmarkParallel(unittest.TestCase):
 
         self.assertEqual(first_call_args[0], [1, 2, 20, 48])
         self.assertEqual(second_call_args[0], [1, 2, 20, 48])
+        self.assertEqual(first_call_args[1], [1.0, 2.0, 5.0, 10.0])
+        self.assertEqual(second_call_args[1], _linear_fit([1, 2, 20, 48], [1.0, 2.0, 5.0, 10.0]))
         self.assertEqual(first_call_kwargs['label'], 'actual')
         self.assertEqual(second_call_kwargs['label'], 'linear fit')
         fake_ax.axhline.assert_not_called()

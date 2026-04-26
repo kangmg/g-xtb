@@ -129,8 +129,12 @@ def _print_table(atoms: Atoms, timings: Dict[int, float], task: str, repeat: int
 
 
 def _linear_fit(x: List[int], y: List[float]) -> List[float]:
+    if len(x) != len(y):
+        raise ValueError("x and y must have the same length")
+    if not x:
+        return []
     if len(x) < 2:
-        return [y[0]] if y else []
+        return [y[0]]
 
     n = len(x)
     x_mean = sum(x) / n
