@@ -932,12 +932,53 @@ class TestBenchmarkParallel(unittest.TestCase):
             _print_table(self.atoms, timings, 'energy', repeat=3)
         output = buf.getvalue()
         self.assertIn('speedup', output.lower())
-        self.assertIn('efficiency', output.lower())
+        self.assertNotIn('efficiency', output.lower())
         self.assertIn('energy', output.lower())
         # nprocs values appear in table
         self.assertIn('1', output)
         self.assertIn('2', output)
         self.assertIn('4', output)
+
+    def test_linear_fit_uses_actual_nprocs_values(self):
+        from gxtb.benchmark import _linear_fit
+        x = [1, 2, 20, 48]
+        y = [1.0, 1.9, 10.0, 16.0]
+        fitted = _linear_fit(x, y)
+
+        # Expected from least-squares fit using true x positions.
+        self.assertAlmostEqual(fitted[0], 1.90864538395168, places=10)
+        self.assertAlmostEqual(fitted[1], 2.22603968938740, places=10)
+        self.assertAlmostEqual(fitted[2], 7.93913718723037, places=10)
+        self.assertAlmostEqual(fitted[3], 16.82617773943054, places=10)
+
+    def test_plot_uses_actual_nprocs_and_linear_fit_only(self):
+        from gxtb.benchmark import _plot
+        import sys
+        import types
+
+        fake_fig = MagicMock()
+        fake_ax = MagicMock()
+        fake_plt = types.ModuleType("matplotlib.pyplot")
+        fake_plt.subplots = MagicMock(return_value=(fake_fig, fake_ax))
+        fake_plt.suptitle = MagicMock()
+        fake_plt.tight_layout = MagicMock()
+        fake_plt.show = MagicMock()
+        fake_mpl = types.ModuleType("matplotlib")
+        fake_mpl.pyplot = fake_plt
+
+        timings = {1: 4.0, 2: 2.0, 20: 0.8, 48: 0.4}
+        with patch.dict(sys.modules, {'matplotlib': fake_mpl, 'matplotlib.pyplot': fake_plt}):
+            _plot(timings, 'energy')
+
+        self.assertEqual(fake_ax.plot.call_count, 2)
+        first_call_args, first_call_kwargs = fake_ax.plot.call_args_list[0]
+        second_call_args, second_call_kwargs = fake_ax.plot.call_args_list[1]
+
+        self.assertEqual(first_call_args[0], [1, 2, 20, 48])
+        self.assertEqual(second_call_args[0], [1, 2, 20, 48])
+        self.assertEqual(first_call_kwargs['label'], 'actual')
+        self.assertEqual(second_call_kwargs['label'], 'linear fit')
+        fake_ax.axhline.assert_not_called()
 
 
 if __name__ == '__main__':
