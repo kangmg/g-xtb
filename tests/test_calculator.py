@@ -945,7 +945,7 @@ class TestBenchmarkParallel(unittest.TestCase):
         y = [1.0, 1.9, 10.0, 16.0]
         fitted = _linear_fit(x, y)
 
-        # Expected from least-squares fit using true x positions.
+        # Expected from least-squares fit using true x positions (slope/intercept).
         self.assertAlmostEqual(fitted[0], 1.90864538395168, places=10)
         self.assertAlmostEqual(fitted[1], 2.22603968938740, places=10)
         self.assertAlmostEqual(fitted[2], 7.93913718723037, places=10)
