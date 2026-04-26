@@ -129,6 +129,7 @@ def _print_table(atoms: Atoms, timings: Dict[int, float], task: str, repeat: int
 
 
 def _linear_fit(x: List[int], y: List[float]) -> List[float]:
+    """Return least-squares linear-fit y values evaluated at the input x values."""
     if len(x) != len(y):
         raise ValueError("x and y must have the same length")
     if not x:

@@ -985,6 +985,10 @@ class TestBenchmarkParallel(unittest.TestCase):
         self.assertEqual(second_call_args[1], _linear_fit([1, 2, 20, 48], [1.0, 2.0, 5.0, 10.0]))
         self.assertEqual(first_call_kwargs['label'], 'actual')
         self.assertEqual(second_call_kwargs['label'], 'linear fit')
+        fake_ax.set_xlabel.assert_called_once_with('nprocs')
+        fake_ax.set_ylabel.assert_called_once_with('Speedup')
+        fake_ax.set_title.assert_called_once_with('Speedup')
+        fake_ax.grid.assert_called_once_with(True, alpha=0.3)
         fake_ax.axhline.assert_not_called()
 
 
