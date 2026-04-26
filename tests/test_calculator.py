@@ -53,15 +53,6 @@ class TestInit(unittest.TestCase):
         self.assertIsNone(c.stdout)
         self.assertEqual(c._raw_stdout, '')
 
-    def test_gxtbhome_default_inside_package(self):
-        c = gxTB()
-        expected = Path(__file__).parent.parent / 'gxtb' / 'parameters'
-        self.assertEqual(c.gxtbhome, expected)
-
-    def test_gxtbhome_custom(self):
-        c = gxTB(gxtbhome='/tmp/myparams')
-        self.assertEqual(c.gxtbhome, Path('/tmp/myparams'))
-
     def test_workdir_stored_as_path(self):
         c = gxTB(workdir='/tmp/mydir')
         self.assertEqual(c.workdir, Path('/tmp/mydir'))
@@ -183,28 +174,35 @@ class TestBuildCommand(unittest.TestCase):
         cmd = c._build_command('mol.xyz', None, None, [])
         self.assertNotIn('--parallel', cmd)
 
-    def test_nprocs_sets_omp_env(self):
-        import os
-        c = gxTB(nprocs=8)
-        recorded_env = {}
-
-        real_run = subprocess.run
-
-        def fake_subprocess(cmd, **kwargs):
+    def _fake_subprocess(self, recorded_env):
+        def fake(cmd, **kwargs):
             recorded_env.update(kwargs.get('env', {}))
             m = MagicMock()
             m.returncode = 0
             m.stdout = '          TOTAL ENERGY              -10.0 Eh\n'
             m.stderr = ''
             return m
+        return fake
 
-        with patch('gxtb.calculator.subprocess.run', side_effect=fake_subprocess):
+    def test_nprocs_sets_omp_env(self):
+        c = gxTB(nprocs=8)
+        recorded_env = {}
+        with patch('gxtb.calculator.subprocess.run', side_effect=self._fake_subprocess(recorded_env)):
             try:
                 c._run_command(['xtb', 'mol.xyz', '--gxtb'], Path('/tmp'))
             except Exception:
                 pass
-
         self.assertEqual(recorded_env.get('OMP_NUM_THREADS'), '8')
+
+    def test_nprocs_1_still_sets_omp_env(self):
+        c = gxTB(nprocs=1)
+        recorded_env = {}
+        with patch('gxtb.calculator.subprocess.run', side_effect=self._fake_subprocess(recorded_env)):
+            try:
+                c._run_command(['xtb', 'mol.xyz', '--gxtb'], Path('/tmp'))
+            except Exception:
+                pass
+        self.assertEqual(recorded_env.get('OMP_NUM_THREADS'), '1')
 
 
 # ---------------------------------------------------------------------------
@@ -731,50 +729,53 @@ class TestGetHessianMocked(unittest.TestCase):
         calc.get_hessian(atoms)
         self.assertIn('energy', calc.results)
 
+    def test_default_acc_in_command(self):
+        atoms = _make_atoms()
+        calc = gxTB()
+        recorded_cmd = []
+
+        def fake_run(cmd, work_dir):
+            recorded_cmd.extend(cmd)
+            n = len(atoms)
+            size = 3 * n
+            (work_dir / 'energy').write_text('$energy\n 1  -10.0\n$end\n')
+            (work_dir / 'charges').write_text('\n'.join(['0.0'] * n) + '\n')
+            hess_vals = [str(float(i)) for i in range(size * size)]
+            lines = ['  ' + '  '.join(hess_vals[i:i+5]) for i in range(0, len(hess_vals), 5)]
+            (work_dir / 'hessian').write_text('$hessian\n' + '\n'.join(lines) + '\n$end\n')
+            calc._raw_stdout = '          TOTAL ENERGY              -10.0 Eh\n'
+
+        calc._run_command = fake_run
+        calc.get_hessian(atoms)
+        self.assertIn('--acc', recorded_cmd)
+        acc_idx = recorded_cmd.index('--acc')
+        self.assertEqual(recorded_cmd[acc_idx + 1], '0.1')
+
+    def test_custom_acc_in_command(self):
+        atoms = _make_atoms()
+        calc = gxTB()
+        recorded_cmd = []
+
+        def fake_run(cmd, work_dir):
+            recorded_cmd.extend(cmd)
+            n = len(atoms)
+            size = 3 * n
+            (work_dir / 'energy').write_text('$energy\n 1  -10.0\n$end\n')
+            (work_dir / 'charges').write_text('\n'.join(['0.0'] * n) + '\n')
+            hess_vals = [str(float(i)) for i in range(size * size)]
+            lines = ['  ' + '  '.join(hess_vals[i:i+5]) for i in range(0, len(hess_vals), 5)]
+            (work_dir / 'hessian').write_text('$hessian\n' + '\n'.join(lines) + '\n$end\n')
+            calc._raw_stdout = '          TOTAL ENERGY              -10.0 Eh\n'
+
+        calc._run_command = fake_run
+        calc.get_hessian(atoms, acc=0.01)
+        acc_idx = recorded_cmd.index('--acc')
+        self.assertEqual(recorded_cmd[acc_idx + 1], '0.01')
+
     def test_no_atoms_raises(self):
         calc = gxTB()
         with self.assertRaises(ValueError):
             calc.get_hessian(None)
-
-
-# ---------------------------------------------------------------------------
-# GXTBHOME warning
-# ---------------------------------------------------------------------------
-
-class TestGxtbhomeWarning(unittest.TestCase):
-
-    def test_missing_gxtbhome_emits_warning(self):
-        import warnings
-        calc = gxTB(gxtbhome='/nonexistent/path/to/params')
-        captured = []
-
-        real_run = calc._run_command
-
-        def fake_run(cmd, work_dir):
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter('always')
-                if not calc.gxtbhome.exists():
-                    warnings.warn('missing', RuntimeWarning)
-            captured.extend(w)
-
-        calc._run_command = fake_run
-
-        atoms = _make_atoms()
-        atoms.calc = calc
-
-        def fake_calc(atoms, properties, system_changes):
-            from ase.calculators.calculator import all_changes
-            calc._raw_stdout = '          TOTAL ENERGY              -10.0 Eh\n'
-            calc.results['energy'] = -10.0 * Hartree
-
-        calc.calculate = fake_calc
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter('always')
-            if not calc.gxtbhome.exists():
-                warnings.warn('g-xTB parameter directory not found', RuntimeWarning)
-
-        self.assertTrue(any(issubclass(x.category, RuntimeWarning) for x in w))
 
 
 # ---------------------------------------------------------------------------

@@ -12,10 +12,6 @@ from .benchmark import benchmark_parallel
 
 __version__ = '0.1.0'
 
-# Bundled parameter files live inside the package so they are always
-# available after a normal `pip install` (wheel or editable).
-_PARAM_DIR = Path(__file__).parent / 'parameters'
-
 _BINARY_VERSION = 'xtb-6.7.1-gxtb-210426'
 _BINARY_BASE_URL = 'https://github.com/kangmg/g-xtb/raw/main/binaries/'
 
@@ -27,9 +23,6 @@ _BINARY_MAP = {
     ('Darwin',  'arm64'):  (f'{_BINARY_VERSION}-macos-arm64.tar.gz',  'xtb'),
     ('Windows', 'AMD64'):  (f'{_BINARY_VERSION}-windows-x86_64.zip',  'xtb.exe'),
 }
-
-_PARAM_FILES = ['.gxtb', '.eeq', '.basisq']
-_PARAM_URL_BASE = 'https://raw.githubusercontent.com/kangmg/g-xtb/main/parameters/'
 
 _LFS_POINTER_MAGIC = b'version https://git-lfs.github.com/spec/v1'
 
@@ -68,9 +61,8 @@ def gxtb_install(install_dir=None, verbose=True, overwrite=False):
     Download and install the g-xTB-enabled xtb binary and parameter files.
 
     The binary is downloaded from the kangmg/g-xtb repository and placed in
-    ``install_dir`` (default: ``~/bin``). Parameter files are updated inside
-    the ``gxtb/parameters/`` package directory so that GXTBHOME is resolved
-    automatically by the calculator.
+    ``install_dir`` (default: ``~/bin``). Parameter files are compiled into
+    the binary as of v2.0.0 and do not need to be installed separately.
 
     Parameters
     ----------
@@ -164,21 +156,6 @@ def gxtb_install(install_dir=None, verbose=True, overwrite=False):
         if verbose:
             print(f"Installed: {exe_path}")
 
-    # --- Update bundled parameter files ---
-    _PARAM_DIR.mkdir(exist_ok=True)
-    for fname in _PARAM_FILES:
-        dest = _PARAM_DIR / fname
-        if dest.exists() and not overwrite:
-            if verbose:
-                print(f"Parameter file exists: {dest}  (use overwrite=True to replace)")
-            continue
-        url = _PARAM_URL_BASE + fname
-        if verbose:
-            print(f"Downloading {url} ...")
-        urllib.request.urlretrieve(url, dest)
-        if verbose:
-            print(f"Updated: {dest}")
-
     # --- Add install_dir to PATH for this session ---
     path_dirs = os.environ.get('PATH', '').split(os.pathsep)
     if str(install_dir) not in path_dirs:
@@ -189,7 +166,6 @@ def gxtb_install(install_dir=None, verbose=True, overwrite=False):
     if verbose:
         print(f"\ng-xTB installation complete.")
         print(f"  Binary : {exe_path}")
-        print(f"  Params : {_PARAM_DIR}")
         print(f"  Usage  : gxTB(command='{exe_path}')")
 
 
