@@ -23,7 +23,7 @@ def benchmark_parallel(
 ) -> Dict[int, float]:
     """
     Measure wall-clock time for a g-xTB calculation across different OpenMP
-    thread counts and report speedup and efficiency.
+    thread counts and report speedup.
 
     Parameters
     ----------
@@ -44,7 +44,7 @@ def benchmark_parallel(
         If True, run one untimed calculation before benchmarking starts
         (helps amortise binary loading and filesystem caching overhead).
     plot : bool, default=False
-        If True, display a speedup and efficiency plot via matplotlib.
+        If True, display a speedup plot via matplotlib.
     calc_kwargs : dict, optional
         Extra keyword arguments forwarded to gxTB() (e.g. charge, uhf,
         gxtbhome, command). The 'nprocs' key is ignored here — use
@@ -115,20 +115,43 @@ def _print_table(atoms: Atoms, timings: Dict[int, float], task: str, repeat: int
     formula = atoms.get_chemical_formula()
     n_atoms = len(atoms)
 
-    col_w = 45
+    col_w = 34
     print(f"\nParallel Scaling Benchmark  [{task}]")
     print(f"Molecule: {formula}  |  {n_atoms} atoms  |  repeat={repeat}")
     print("─" * col_w)
-    print(f" {'nprocs':>6} │ {'time (s)':>10} │ {'speedup':>8} │ {'efficiency':>10}")
-    print("─" * 8 + "┼" + "─" * 12 + "┼" + "─" * 10 + "┼" + "─" * 12)
+    print(f" {'nprocs':>6} │ {'time (s)':>10} │ {'speedup':>8}")
+    print("─" * 8 + "┼" + "─" * 12 + "┼" + "─" * 10)
     for nprocs in nprocs_list:
         t = timings[nprocs]
         speedup = t_base / t
-        efficiency = speedup / nprocs * 100
-        print(
-            f" {nprocs:>6} │ {t:>10.3f} │ {speedup:>7.2f}× │ {efficiency:>9.1f}%"
-        )
+        print(f" {nprocs:>6} │ {t:>10.3f} │ {speedup:>7.2f}×")
     print("─" * col_w)
+
+
+def _linear_fit(x: List[int], y: List[float]) -> List[float]:
+    """Return least-squares linear-fit y values evaluated at the input x values.
+
+    For a single input point, the same y value is returned because a slope
+    cannot be estimated from one sample.
+    """
+    if len(x) != len(y):
+        raise ValueError("x and y must have the same length")
+    if not x:
+        return []
+    if len(x) < 2:
+        return [y[0]]
+
+    n = len(x)
+    x_mean = sum(x) / n
+    y_mean = sum(y) / n
+    ss_xx = sum((xi - x_mean) ** 2 for xi in x)
+    if abs(ss_xx) < 1e-12:
+        # Identical x values cannot define a slope; return the mean level.
+        return [y_mean for _ in x]
+    ss_xy = sum((xi - x_mean) * (yi - y_mean) for xi, yi in zip(x, y))
+    slope = ss_xy / ss_xx
+    intercept = y_mean - slope * x_mean
+    return [slope * xi + intercept for xi in x]
 
 
 def _plot(timings: Dict[int, float], task: str) -> None:
@@ -144,26 +167,17 @@ def _plot(timings: Dict[int, float], task: str) -> None:
     nprocs_list = sorted(timings)
     t_base = timings[nprocs_list[0]]
     speedups = [t_base / timings[n] for n in nprocs_list]
-    efficiencies = [t_base / timings[n] / n * 100 for n in nprocs_list]
+    fitted_speedups = _linear_fit(nprocs_list, speedups)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+    fig, ax = plt.subplots(1, 1, figsize=(6, 4))
 
-    ax1.plot(nprocs_list, speedups, 'o-', label='actual')
-    ax1.plot(nprocs_list, nprocs_list, '--', color='gray', alpha=0.6, label='ideal')
-    ax1.set_xlabel('nprocs')
-    ax1.set_ylabel('Speedup')
-    ax1.set_title('Speedup')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-
-    ax2.plot(nprocs_list, efficiencies, 's-', color='tab:orange')
-    ax2.axhline(100, linestyle='--', color='gray', alpha=0.6, label='ideal')
-    ax2.set_xlabel('nprocs')
-    ax2.set_ylabel('Efficiency (%)')
-    ax2.set_title('Parallel Efficiency')
-    ax2.set_ylim(0, 115)
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
+    ax.plot(nprocs_list, speedups, 'o-', label='actual')
+    ax.plot(nprocs_list, fitted_speedups, '--', color='tab:red', alpha=0.9, label='linear fit')
+    ax.set_xlabel('nprocs')
+    ax.set_ylabel('Speedup')
+    ax.set_title('Speedup')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
 
     plt.suptitle(f'g-xTB Parallel Scaling  [{task}]', y=1.02)
     plt.tight_layout()
