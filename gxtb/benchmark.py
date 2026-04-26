@@ -145,7 +145,7 @@ def _linear_fit(x: List[int], y: List[float]) -> List[float]:
     x_mean = sum(x) / n
     y_mean = sum(y) / n
     ss_xx = sum((xi - x_mean) ** 2 for xi in x)
-    if ss_xx == 0:
+    if abs(ss_xx) < 1e-12:
         # Identical x values cannot define a slope; return the mean level.
         return [y_mean for _ in x]
     ss_xy = sum((xi - x_mean) * (yi - y_mean) for xi, yi in zip(x, y))
